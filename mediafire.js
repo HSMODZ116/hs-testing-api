@@ -1,4 +1,4 @@
-// Cloudflare Worker for MediaFire Direct Links with Uploaded Date
+// Cloudflare Worker for MediaFire Direct Links with real uploaded date
 addEventListener('fetch', event => {
   event.respondWith(handleRequest(event.request))
 })
@@ -11,7 +11,6 @@ async function handleRequest(request) {
     'Access-Control-Allow-Headers': 'Content-Type',
   }
 
-  // Handle OPTIONS request for CORS
   if (request.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
   }
@@ -79,40 +78,14 @@ async function handleRequest(request) {
       }
     } catch (e) {}
 
-    // --- Extract uploaded date from page ---
+    // --- Extract uploaded date from MediaFire JSON in page ---
     let uploaded = null
-    const uploadedMatch = html.match(/Uploaded:\s*([A-Za-z]+\s+\d{1,2},\s+\d{4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?)?)/i)
-    if (uploadedMatch && uploadedMatch[1]) {
-      const dateObj = new Date(uploadedMatch[1].trim())
-      if (!isNaN(dateObj)) {
-        const yyyy = dateObj.getFullYear()
-        const mm = String(dateObj.getMonth() + 1).padStart(2, '0')
-        const dd = String(dateObj.getDate()).padStart(2, '0')
-        const hh = String(dateObj.getHours()).padStart(2, '0')
-        const min = String(dateObj.getMinutes()).padStart(2, '0')
-        const ss = String(dateObj.getSeconds()).padStart(2, '0')
-        uploaded = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`
-      }
-    }
-
-    // --- Fallback: use Last-Modified header if uploaded still null ---
-    if (!uploaded) {
+    const infoMatch = html.match(/kNO\s*=\s*(\{.*?\});/)
+    if (infoMatch && infoMatch[1]) {
       try {
-        const headResp = await fetch(direct, { method: 'HEAD' })
-        const lastModified = headResp.headers.get('last-modified')
-        if (lastModified) {
-          const dateObj = new Date(lastModified)
-          if (!isNaN(dateObj)) {
-            const yyyy = dateObj.getFullYear()
-            const mm = String(dateObj.getMonth() + 1).padStart(2, '0')
-            const dd = String(dateObj.getDate()).padStart(2, '0')
-            const hh = String(dateObj.getHours()).padStart(2, '0')
-            const min = String(dateObj.getMinutes()).padStart(2, '0')
-            const ss = String(dateObj.getSeconds()).padStart(2, '0')
-            uploaded = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`
-          }
-        }
-      } catch (e) {}
+        const info = JSON.parse(infoMatch[1])
+        if (info.uploaded) uploaded = info.uploaded
+      } catch(e) {}
     }
 
     // Final response
