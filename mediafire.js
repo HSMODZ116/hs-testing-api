@@ -135,7 +135,24 @@ async function handleRequest(request) {
         }
       }
     } catch (error) {
-      // File size detection failed, but we continue
+      // File size detection failed, continue
+    }
+
+    // --- Extract uploaded date ---
+    let uploaded = null
+    const uploadedMatch = html.match(/Uploaded:\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})/)
+    if (uploadedMatch && uploadedMatch[1]) {
+      const dateStr = uploadedMatch[1].trim() // e.g., "November 12, 2025"
+      const dateObj = new Date(dateStr)
+      if (!isNaN(dateObj)) {
+        const yyyy = dateObj.getFullYear()
+        const mm = String(dateObj.getMonth() + 1).padStart(2, '0')
+        const dd = String(dateObj.getDate()).padStart(2, '0')
+        const hh = String(dateObj.getHours()).padStart(2, '0')
+        const min = String(dateObj.getMinutes()).padStart(2, '0')
+        const ss = String(dateObj.getSeconds()).padStart(2, '0')
+        uploaded = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`
+      }
     }
 
     // Final response
@@ -146,6 +163,7 @@ async function handleRequest(request) {
       "file_name": fileName,
       "file_size": fileSize,
       "file_type": fileType,
+      "uploaded": uploaded,
       "credits": "Haseeb Sahil"
     }), {
       headers: {
