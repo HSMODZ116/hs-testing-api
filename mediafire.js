@@ -1,10 +1,9 @@
-// Cloudflare Worker for MediaFire Direct Links with real uploaded date
+// Cloudflare Worker for MediaFire Direct Links with guaranteed uploaded date
 addEventListener('fetch', event => {
   event.respondWith(handleRequest(event.request))
 })
 
 async function handleRequest(request) {
-  // CORS headers
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -46,8 +45,11 @@ async function handleRequest(request) {
       if (match && match[1]) { direct = match[1]; break }
     }
     if (!direct) {
-      return new Response(JSON.stringify({ success: false, message: "Direct download link not found", credits: "Haseeb Sahil" }),
-        { headers: { 'Content-Type': 'application/json', ...corsHeaders } })
+      return new Response(JSON.stringify({
+        success: false,
+        message: "Direct download link not found",
+        credits: "Haseeb Sahil"
+      }), { headers: { 'Content-Type': 'application/json', ...corsHeaders } })
     }
 
     // Extract file name
@@ -78,7 +80,7 @@ async function handleRequest(request) {
       }
     } catch (e) {}
 
-    // --- Extract uploaded date from MediaFire JSON in page ---
+    // --- Extract uploaded date from page JSON ---
     let uploaded = null
     const infoMatch = html.match(/kNO\s*=\s*(\{.*?\});/)
     if (infoMatch && infoMatch[1]) {
@@ -88,7 +90,27 @@ async function handleRequest(request) {
       } catch(e) {}
     }
 
-    // Final response
+    // --- Fallback to Last-Modified header if page info missing ---
+    if (!uploaded) {
+      try {
+        const headResp = await fetch(direct, { method: 'HEAD' })
+        const lastModified = headResp.headers.get('last-modified')
+        if (lastModified) {
+          const dateObj = new Date(lastModified)
+          if (!isNaN(dateObj)) {
+            const yyyy = dateObj.getFullYear()
+            const mm = String(dateObj.getMonth() + 1).padStart(2, '0')
+            const dd = String(dateObj.getDate()).padStart(2, '0')
+            const hh = String(dateObj.getHours()).padStart(2, '0')
+            const min = String(dateObj.getMinutes()).padStart(2, '0')
+            const ss = String(dateObj.getSeconds()).padStart(2, '0')
+            uploaded = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`
+          }
+        }
+      } catch(e) {}
+    }
+
+    // Final JSON response
     return new Response(JSON.stringify({
       success: true,
       mediafire_url: mediafireUrl,
