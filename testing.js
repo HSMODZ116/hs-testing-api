@@ -23,64 +23,94 @@ export default {
         return new Response(JSON.stringify({
           success: false,
           error: 'Not found',
-          message: 'Use: /?phone=03001234567'
+          message: 'Use: /?phone=03001234567 or /?cnic=3810390345114'
         }, null, 2), {
           status: 404,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Get phone from query parameters
+      // Get phone or CNIC from query parameters
       const phone = url.searchParams.get('phone') || 
                     url.searchParams.get('number') || 
                     url.searchParams.get('mobile') || 
                     url.searchParams.get('query');
 
-      // If no phone parameter
-      if (!phone) {
+      const cnic = url.searchParams.get('cnic') || 
+                   url.searchParams.get('id') || 
+                   url.searchParams.get('cnicnumber');
+
+      // If no phone or CNIC parameter
+      if (!phone && !cnic) {
         return Response.json({
           success: false,
-          error: 'Phone number is required',
-          example: 'https://api.your-worker.workers.dev/?phone=03001234567',
-          supported_params: ['phone', 'number', 'mobile', 'query']
+          error: 'Phone number or CNIC is required',
+          example_phone: 'https://api.your-worker.workers.dev/?phone=03001234567',
+          example_cnic: 'https://api.your-worker.workers.dev/?cnic=3810390345114',
+          supported_params: ['phone', 'number', 'mobile', 'query', 'cnic', 'id', 'cnicnumber']
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Clean and validate phone
-      const cleanedPhone = phone.toString().replace(/\D/g, '');
-      
-      // Add leading zero if needed
-      let finalPhone = cleanedPhone;
-      if (cleanedPhone.startsWith('92') && cleanedPhone.length === 12) {
-        finalPhone = '0' + cleanedPhone.substring(2);
-      } else if (cleanedPhone.startsWith('3') && cleanedPhone.length === 10) {
-        finalPhone = '0' + cleanedPhone;
-      }
+      let searchType, searchValue, cleanedValue;
 
-      // Validate Pakistani number format
-      if (!/^03\d{9}$/.test(finalPhone)) {
-        return Response.json({
-          success: false,
-          error: 'Invalid Pakistani mobile number',
-          received: phone,
-          expected: '03XXXXXXXXX (11 digits)',
-          cleaned: finalPhone
-        }, {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
-        });
+      if (phone) {
+        // Process phone number search
+        searchType = 'phone';
+        cleanedValue = phone.toString().replace(/\D/g, '');
+        
+        // Add leading zero if needed
+        if (cleanedValue.startsWith('92') && cleanedValue.length === 12) {
+          searchValue = '0' + cleanedValue.substring(2);
+        } else if (cleanedValue.startsWith('3') && cleanedValue.length === 10) {
+          searchValue = '0' + cleanedValue;
+        } else {
+          searchValue = cleanedValue;
+        }
+
+        // Validate Pakistani number format
+        if (!/^03\d{9}$/.test(searchValue)) {
+          return Response.json({
+            success: false,
+            error: 'Invalid Pakistani mobile number',
+            received: phone,
+            expected: '03XXXXXXXXX (11 digits)',
+            cleaned: searchValue
+          }, {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      } else {
+        // Process CNIC search
+        searchType = 'cnic';
+        searchValue = cnic.toString().replace(/\D/g, '');
+        cleanedValue = searchValue;
+
+        // Validate CNIC format (13 digits)
+        if (searchValue.length !== 13) {
+          return Response.json({
+            success: false,
+            error: 'Invalid CNIC number',
+            received: cnic,
+            expected: '13 digits (without dashes)',
+            cleaned: searchValue
+          }, {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
       }
 
       // Fetch data from paksimownerdetails.com
-      const data = await fetchData(finalPhone);
+      const data = await fetchData(searchType, searchValue, cleanedValue);
       
-      // Return response - Updated structure
+      // Return response
       return Response.json({
         success: true,
-        phone: finalPhone,
+        [searchType]: cleanedValue,
         data: data
       }, {
         headers: {
@@ -103,12 +133,18 @@ export default {
 };
 
 // ========== FETCH DATA FUNCTION ==========
-async function fetchData(phoneNumber) {
+async function fetchData(searchType, searchValue, cleanedValue) {
   const url = 'https://paksimownerdetails.com/SecureInfo.php';
   
   // Create form data as per website
   const formData = new URLSearchParams();
-  formData.append('number', phoneNumber);
+  
+  if (searchType === 'phone') {
+    formData.append('number', searchValue);
+  } else {
+    formData.append('cnic', searchValue);
+  }
+  
   formData.append('search', 'search');
 
   const response = await fetch(url, {
@@ -129,11 +165,11 @@ async function fetchData(phoneNumber) {
   });
 
   const html = await response.text();
-  return parseHTML(html, phoneNumber);
+  return parseHTML(html, searchType, cleanedValue);
 }
 
 // ========== HTML PARSER ==========
-function parseHTML(html, phoneNumber) {
+function parseHTML(html, searchType, searchValue) {
   const result = {
     records: []
   };
@@ -183,16 +219,12 @@ function parseHTML(html, phoneNumber) {
 
     // We need at least 4 columns: Mobile, Name, CNIC, Address
     if (cells.length >= 4) {
-      // Determine network based on phone number prefix
-      let network = getNetwork(phoneNumber);
-      
       const record = {
         mobile: formatMobile(cells[0] || ''),
         name: cells[1] || '',
-        cnic: formatCNIC(cells[2] || ''),  // CNIC without hyphens
+        cnic: formatCNIC(cells[2] || ''),
         address: cells[3] || '',
         status: cells[4] || 'Unknown',
-        network: network,  // Proper network detection
         country: 'Pakistan'
       };
 
@@ -231,48 +263,4 @@ function formatCNIC(cnic) {
   
   // Return only digits without any formatting
   return cleaned;
-}
-
-function getNetwork(phoneNumber) {
-  const prefix = phoneNumber.substring(0, 4);
-  
-  // Jazz/Warid prefixes
-  if (['0300', '0301', '0302', '0303', '0304', '0305', '0306', '0307', '0308', '0309'].includes(prefix)) {
-    return 'Jazz';
-  }
-  // Jazz new prefixes
-  else if (['0310', '0311', '0312', '0313', '0314', '0315'].includes(prefix)) {
-    return 'Jazz';
-  }
-  // Telenor prefixes
-  else if (['0340', '0341', '0342', '0343', '0344', '0345', '0346', '0347'].includes(prefix)) {
-    return 'Telenor';
-  }
-  // Telenor new prefixes
-  else if (['0348', '0349'].includes(prefix)) {
-    return 'Telenor';
-  }
-  // Ufone prefixes
-  else if (['0330', '0331', '0332', '0333', '0334', '0335', '0336', '0337'].includes(prefix)) {
-    return 'Ufone';
-  }
-  // Ufone new prefixes
-  else if (['0338', '0339'].includes(prefix)) {
-    return 'Ufone';
-  }
-  // Zong prefixes
-  else if (['0316', '0317', '0318', '0319'].includes(prefix)) {
-    return 'Zong';
-  }
-  // Zong new prefixes
-  else if (['0320', '0321', '0322', '0323', '0324', '0325'].includes(prefix)) {
-    return 'Zong';
-  }
-  // Special number ranges
-  else if (['0326', '0327', '0328', '0329'].includes(prefix)) {
-    return 'Zong';
-  }
-  else {
-    return 'Unknown';
-  }
 }
