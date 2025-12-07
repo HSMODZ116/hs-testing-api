@@ -10,24 +10,22 @@ export default {
 
       if (!phone) {
         return jsonResponse(
-          {
-            error: "phone parameter required. Example: /?phone=03027665767",
-          },
+          { error: "phone parameter required. Example: /?phone=03027665767" },
           400
         );
       }
 
-      // Fetch phone records
+      // 1) Phone Records
       const phoneRecords = await fetchRecords(phone);
       if (phoneRecords.length === 0) {
         return jsonResponse({ success: true, phone, records: [] });
       }
 
-      // Fetch CNIC records from first row
+      // 2) CNIC Records
       const cnic = phoneRecords[0].CNIC;
       const cnicRecords = cnic ? await fetchRecords(cnic) : [];
 
-      // Merge + Deduplicate
+      // Merge + Remove Duplicates
       const all = [...phoneRecords, ...cnicRecords];
       const unique = [];
       const seen = new Set();
@@ -58,29 +56,30 @@ export default {
   },
 };
 
-/* ------------------------- JSON RESPONSE ------------------------- */
+/* ----------------------------- JSON Helper ----------------------------- */
+
 function jsonResponse(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    },
   });
 }
 
-/* ------------------------- FETCH RECORDS ------------------------- */
+/* ----------------------------- Fetch Records ----------------------------- */
 
 async function fetchRecords(value) {
   const POST_URL = "https://paksimownerdetails.com/SecureInfo.php";
 
-  const payload = `cnic=${encodeURIComponent(
-    value
-  )}&search=Search`;
+  const payload = `cnic=${encodeURIComponent(value)}&search=Search`;
 
   const headers = {
     "User-Agent":
-      "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139 Mobile Safari/537.36",
-    Accept:
-      "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
     "Content-Type": "application/x-www-form-urlencoded",
+    Accept: "*/*",
     Referer: "https://paksimownerdetails.com/",
   };
 
@@ -91,24 +90,22 @@ async function fetchRecords(value) {
   });
 
   const html = await res.text();
-  return parseTableHtml(html);
+  return parseTable(html);
 }
 
-/* ------------------------- HTML TABLE PARSER ------------------------- */
+/* ----------------------------- HTML Parser ----------------------------- */
 
-function parseTableHtml(html) {
+function parseTable(html) {
   const rows = [];
-
   const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  let match;
 
+  let match;
   while ((match = rowRegex.exec(html))) {
     const rowHtml = match[1];
 
-    const cols = [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(
-      (m) =>
-        m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()
-    );
+    const cols = [
+      ...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi),
+    ].map((m) => m[1].replace(/<[^>]+>/g, "").trim());
 
     if (cols.length >= 3) {
       rows.push({
