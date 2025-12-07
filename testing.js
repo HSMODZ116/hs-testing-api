@@ -145,18 +145,6 @@ function parseHTML(html, phoneNumber) {
     return result;
   }
 
-  // Extract network information
-  let network = 'Unknown';
-  if (html.includes('Jazz') || html.includes('Mobilink')) {
-    network = 'Jazz';
-  } else if (html.includes('Telenor')) {
-    network = 'Telenor';
-  } else if (html.includes('Ufone')) {
-    network = 'Ufone';
-  } else if (html.includes('Zong')) {
-    network = 'Zong';
-  }
-
   // Look for table rows
   const rows = [];
   const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
@@ -195,13 +183,16 @@ function parseHTML(html, phoneNumber) {
 
     // We need at least 4 columns: Mobile, Name, CNIC, Address
     if (cells.length >= 4) {
+      // Determine network based on phone number prefix
+      let network = getNetwork(phoneNumber);
+      
       const record = {
         mobile: formatMobile(cells[0] || ''),
         name: cells[1] || '',
-        cnic: formatCNIC(cells[2] || ''),
+        cnic: formatCNIC(cells[2] || ''),  // CNIC without hyphens
         address: cells[3] || '',
         status: cells[4] || 'Unknown',
-        network: network,  // Network added here
+        network: network,  // Proper network detection
         country: 'Pakistan'
       };
 
@@ -235,15 +226,53 @@ function formatMobile(mobile) {
 function formatCNIC(cnic) {
   if (!cnic) return '';
   
-  // Remove all non-digits
+  // Remove all non-digits including hyphens
   let cleaned = cnic.replace(/\D/g, '');
   
-  // Format as XXXXX-XXXXXXX-X if 13 digits
-  if (cleaned.length === 13) {
-    return cleaned.substring(0, 5) + '-' + 
-           cleaned.substring(5, 12) + '-' + 
-           cleaned.substring(12);
-  }
-  
+  // Return only digits without any formatting
   return cleaned;
+}
+
+function getNetwork(phoneNumber) {
+  const prefix = phoneNumber.substring(0, 4);
+  
+  // Jazz/Warid prefixes
+  if (['0300', '0301', '0302', '0303', '0304', '0305', '0306', '0307', '0308', '0309'].includes(prefix)) {
+    return 'Jazz';
+  }
+  // Jazz new prefixes
+  else if (['0310', '0311', '0312', '0313', '0314', '0315'].includes(prefix)) {
+    return 'Jazz';
+  }
+  // Telenor prefixes
+  else if (['0340', '0341', '0342', '0343', '0344', '0345', '0346', '0347'].includes(prefix)) {
+    return 'Telenor';
+  }
+  // Telenor new prefixes
+  else if (['0348', '0349'].includes(prefix)) {
+    return 'Telenor';
+  }
+  // Ufone prefixes
+  else if (['0330', '0331', '0332', '0333', '0334', '0335', '0336', '0337'].includes(prefix)) {
+    return 'Ufone';
+  }
+  // Ufone new prefixes
+  else if (['0338', '0339'].includes(prefix)) {
+    return 'Ufone';
+  }
+  // Zong prefixes
+  else if (['0316', '0317', '0318', '0319'].includes(prefix)) {
+    return 'Zong';
+  }
+  // Zong new prefixes
+  else if (['0320', '0321', '0322', '0323', '0324', '0325'].includes(prefix)) {
+    return 'Zong';
+  }
+  // Special number ranges
+  else if (['0326', '0327', '0328', '0329'].includes(prefix)) {
+    return 'Zong';
+  }
+  else {
+    return 'Unknown';
+  }
 }
