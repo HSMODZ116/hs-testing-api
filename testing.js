@@ -69,7 +69,7 @@ function jsonResponse(obj, status = 200) {
 /* ------------------------- Fetch Records ------------------------- */
 
 async function fetchRecords(value) {
-  const POST_URL = "https://paksimownerdetails.com/numberDetails.php";
+  const POST_URL = "https://paksimownerdetails.com/SecureInfo.php";
 
   const payload =
     "numberCnic=" + encodeURIComponent(value) + "&searchNumber=search";
