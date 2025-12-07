@@ -20,13 +20,12 @@ export default {
 
       // Only handle root path
       if (path !== '/') {
-        return new Response(JSON.stringify({
+        return Response.json({
           success: false,
           error: 'Not found',
           message: 'Use: /?phone=03001234567'
-        }, null, 2), {
-          status: 404,
-          headers: { 'Content-Type': 'application/json' }
+        }, {
+          status: 404
         });
       }
 
@@ -44,45 +43,35 @@ export default {
           example: 'https://api.your-worker.workers.dev/?phone=03001234567',
           supported_params: ['phone', 'number', 'mobile', 'query']
         }, {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
+          status: 400
         });
       }
 
       // Clean and validate phone
-      const cleanedPhone = phone.toString().replace(/\D/g, '');
+      const cleanedPhone = cleanPhoneNumber(phone);
       
-      // Add leading zero if needed
-      let finalPhone = cleanedPhone;
-      if (cleanedPhone.startsWith('92') && cleanedPhone.length === 12) {
-        finalPhone = '0' + cleanedPhone.substring(2);
-      } else if (cleanedPhone.startsWith('3') && cleanedPhone.length === 10) {
-        finalPhone = '0' + cleanedPhone;
-      }
-
       // Validate Pakistani number format
-      if (!/^03\d{9}$/.test(finalPhone)) {
+      if (!/^03\d{9}$/.test(cleanedPhone)) {
         return Response.json({
           success: false,
           error: 'Invalid Pakistani mobile number',
           received: phone,
           expected: '03XXXXXXXXX (11 digits)',
-          cleaned: finalPhone
+          cleaned: cleanedPhone
         }, {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
+          status: 400
         });
       }
 
       // Fetch data from paksimownerdetails.com
-      const data = await fetchData(finalPhone);
+      const data = await fetchSimData(cleanedPhone);
       
       // Return response
       return Response.json({
         success: true,
         query: {
           original: phone,
-          cleaned: finalPhone,
+          cleaned: cleanedPhone,
           timestamp: new Date().toISOString()
         },
         data: data
@@ -100,18 +89,33 @@ export default {
         message: error.message,
         timestamp: new Date().toISOString()
       }, {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
+        status: 500
       });
     }
   }
 };
 
-// ========== FETCH DATA FUNCTION ==========
-async function fetchData(phoneNumber) {
+// ========== PHONE CLEANING ==========
+function cleanPhoneNumber(phone) {
+  if (!phone) return '';
+  
+  // Remove all non-digits
+  let cleaned = phone.toString().replace(/\D/g, '');
+  
+  // Convert formats
+  if (cleaned.startsWith('92') && cleaned.length === 12) {
+    cleaned = '0' + cleaned.substring(2);
+  } else if (cleaned.startsWith('3') && cleaned.length === 10) {
+    cleaned = '0' + cleaned;
+  }
+  
+  return cleaned;
+}
+
+// ========== FETCH DATA FROM WEBSITE ==========
+async function fetchSimData(phoneNumber) {
   const url = 'https://paksimownerdetails.com/SecureInfo.php';
   
-  // Create form data as per website
   const formData = new URLSearchParams();
   formData.append('number', phoneNumber);
   formData.append('search', 'search');
@@ -125,121 +129,209 @@ async function fetchData(phoneNumber) {
       'Content-Type': 'application/x-www-form-urlencoded',
       'Origin': 'https://paksimownerdetails.com',
       'Referer': 'https://paksimownerdetails.com/',
-      'Sec-Fetch-Dest': 'document',
-      'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'same-origin',
-      'Upgrade-Insecure-Requests': '1'
     },
     body: formData.toString()
   });
 
   const html = await response.text();
-  return parseHTML(html);
+  return parseSimData(html, phoneNumber);
 }
 
-// ========== HTML PARSER ==========
-function parseHTML(html) {
+// ========== IMPROVED PARSER ==========
+function parseSimData(html, phoneNumber) {
   const result = {
     found: false,
     records: []
   };
 
-  // Check if no records found
+  // Check for no records
   if (html.includes('No record found') || 
       html.toLowerCase().includes('not found') ||
-      html.includes('Sorry') && html.includes('found')) {
+      html.includes('Sorry, no details found')) {
     return result;
   }
 
-  // Look for table rows
-  const rows = [];
-  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  let rowMatch;
-
-  while ((rowMatch = rowRegex.exec(html))) {
-    rows.push(rowMatch[1]);
+  // Try to find the main data table
+  // First, look for table structure
+  const tableStart = html.indexOf('<table');
+  if (tableStart === -1) {
+    return result;
   }
 
-  // Skip header row (first row with th tags)
+  const tableEnd = html.indexOf('</table>', tableStart);
+  if (tableEnd === -1) {
+    return result;
+  }
+
+  const tableHTML = html.substring(tableStart, tableEnd + 8);
+  
+  // Extract all rows
+  const rows = [];
+  let rowStart = 0;
+  
+  while ((rowStart = tableHTML.indexOf('<tr', rowStart)) !== -1) {
+    const rowEnd = tableHTML.indexOf('</tr>', rowStart);
+    if (rowEnd === -1) break;
+    
+    const rowHTML = tableHTML.substring(rowStart, rowEnd + 5);
+    rows.push(rowHTML);
+    rowStart = rowEnd + 5;
+  }
+
+  // Process rows (skip header row)
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     
-    // Skip header row
-    if (row.includes('<th>') || row.toLowerCase().includes('mobile') && 
-        row.toLowerCase().includes('name') && row.toLowerCase().includes('cnic')) {
+    // Skip header row (contains th tags or header text)
+    if (row.includes('<th>') || 
+        (row.toLowerCase().includes('mobile') && row.toLowerCase().includes('name'))) {
       continue;
     }
 
-    // Extract cells from row
+    // Extract cells using regex
     const cells = [];
-    const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+    const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g;
     let cellMatch;
-
+    
     while ((cellMatch = cellRegex.exec(row))) {
       let content = cellMatch[1]
-        .replace(/<[^>]+>/g, '')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/\s+/g, ' ')
+        .replace(/<[^>]+>/g, '') // Remove HTML tags
+        .replace(/&nbsp;/g, ' ') // Replace &nbsp;
+        .replace(/[\r\n]+/g, ' ') // Replace newlines
+        .replace(/\s+/g, ' ') // Collapse multiple spaces
         .trim();
       
-      // Clean emojis and extra spaces
+      // Remove emojis and special characters
       content = content.replace(/[^\x00-\x7F]/g, '').trim();
+      
       cells.push(content);
     }
 
-    // We need at least 4 columns: Mobile, Name, CNIC, Address
+    // Debug: Log what we found
+    console.log(`Row ${i}:`, cells);
+
+    // Process based on number of cells
     if (cells.length >= 4) {
+      const record = createRecordFromCells(cells, phoneNumber);
+      if (record && record.mobile) {
+        result.records.push(record);
+        result.found = true;
+      }
+    } else if (cells.length === 1 && /^\d+$/.test(cells[0])) {
+      // Sometimes phone number might be in separate row
       const record = {
-        mobile: formatMobile(cells[0] || ''),
-        name: cells[1] || '',
-        cnic: formatCNIC(cells[2] || ''),
-        address: cells[3] || '',
-        status: cells[4] || 'Unknown',
-        brand: cells[5] || 'Unknown',
+        mobile: cleanPhoneNumber(cells[0]),
+        name: '',
+        cnic: '',
+        address: '',
+        status: 'Unknown',
+        brand: 'Unknown',
         country: 'Pakistan',
         timestamp: new Date().toISOString()
       };
-
-      // Validate record has at least mobile or name
-      if (record.mobile || record.name) {
+      
+      if (record.mobile) {
         result.records.push(record);
         result.found = true;
       }
     }
   }
 
+  // If no records found but HTML contains the number, create minimal record
+  if (!result.found && html.includes(phoneNumber.substring(1))) {
+    result.records.push({
+      mobile: phoneNumber,
+      name: 'Information not available',
+      cnic: '',
+      address: '',
+      status: 'Unknown',
+      brand: 'Unknown',
+      country: 'Pakistan',
+      timestamp: new Date().toISOString()
+    });
+    result.found = true;
+  }
+
   return result;
 }
 
-// ========== HELPER FUNCTIONS ==========
-function formatMobile(mobile) {
-  if (!mobile) return '';
-  
-  // Remove all non-digits
-  let cleaned = mobile.replace(/\D/g, '');
-  
-  // Ensure proper format
-  if (cleaned.startsWith('92') && cleaned.length === 12) {
-    cleaned = '0' + cleaned.substring(2);
-  } else if (cleaned.startsWith('3') && cleaned.length === 10) {
-    cleaned = '0' + cleaned;
+// ========== CREATE RECORD FROM CELLS ==========
+function createRecordFromCells(cells, phoneNumber) {
+  // Based on your screenshot: Mobile, Name, CNIC, Address, Status, Brand
+  const record = {
+    mobile: '',
+    name: '',
+    cnic: '',
+    address: '',
+    status: 'Unknown',
+    brand: 'Unknown',
+    country: 'Pakistan',
+    timestamp: new Date().toISOString()
+  };
+
+  // Try to identify each cell
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i];
+    
+    // Mobile number (should be first cell)
+    if (i === 0 && /^\d+$/.test(cell) && (cell.length === 10 || cell.length === 11)) {
+      record.mobile = cleanPhoneNumber(cell);
+    }
+    // Name (second cell, contains letters)
+    else if (i === 1 && /[a-zA-Z]/.test(cell)) {
+      record.name = cell;
+    }
+    // CNIC (13 digits or with dashes)
+    else if ((cell.length === 13 && /^\d+$/.test(cell)) || 
+             cell.includes('-') && cell.replace(/\D/g, '').length === 13) {
+      record.cnic = formatCNIC(cell);
+    }
+    // Address (longer text)
+    else if (i >= 3 && cell.length > 20 && /[a-zA-Z]/.test(cell)) {
+      record.address = cell;
+    }
+    // Status (short word)
+    else if (i >= 4 && ['Active', 'Inactive', 'Blocked', 'Suspended'].some(s => 
+             cell.toLowerCase().includes(s.toLowerCase()))) {
+      record.status = cell;
+    }
+    // Brand/Operator
+    else if (i >= 5 && ['Jazz', 'Zong', 'Telenor', 'Ufone', 'SCO'].some(b => 
+             cell.toLowerCase().includes(b.toLowerCase()))) {
+      record.brand = cell;
+    }
+    // Assign remaining cells
+    else {
+      if (!record.mobile && /^\d+$/.test(cell) && cell.length >= 10) {
+        record.mobile = cleanPhoneNumber(cell);
+      } else if (!record.name && /[a-zA-Z\s\.]+$/.test(cell) && cell.length > 2) {
+        record.name = cell;
+      } else if (!record.address && cell.length > 10) {
+        record.address = cell;
+      }
+    }
   }
-  
-  return cleaned;
+
+  // If mobile not found in cells, use the queried phone
+  if (!record.mobile) {
+    record.mobile = phoneNumber;
+  }
+
+  return record;
 }
 
+// ========== FORMAT CNIC ==========
 function formatCNIC(cnic) {
   if (!cnic) return '';
   
   // Remove all non-digits
   let cleaned = cnic.replace(/\D/g, '');
   
-  // Format as XXXXX-XXXXXXX-X if 13 digits
-  if (cleaned.length === 13) {
-    return cleaned.substring(0, 5) + '-' + 
-           cleaned.substring(5, 12) + '-' + 
-           cleaned.substring(12);
-  }
+  // Must be 13 digits
+  if (cleaned.length !== 13) return cnic;
   
-  return cleaned;
+  // Format: XXXXX-XXXXXXX-X
+  return cleaned.substring(0, 5) + '-' + 
+         cleaned.substring(5, 12) + '-' + 
+         cleaned.substring(12);
 }
