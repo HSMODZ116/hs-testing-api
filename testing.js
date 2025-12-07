@@ -80,7 +80,7 @@ export default {
       // Return response - Updated structure
       return Response.json({
         success: true,
-        phone: finalPhone,  // Phone field added directly under success
+        phone: finalPhone,
         data: data
       }, {
         headers: {
@@ -93,8 +93,7 @@ export default {
       return Response.json({
         success: false,
         error: 'Server error',
-        message: error.message,
-        timestamp: new Date().toISOString()
+        message: error.message
       }, {
         status: 500,
         headers: { 'Content-Type': 'application/json' }
@@ -130,13 +129,12 @@ async function fetchData(phoneNumber) {
   });
 
   const html = await response.text();
-  return parseHTML(html);
+  return parseHTML(html, phoneNumber);
 }
 
 // ========== HTML PARSER ==========
-function parseHTML(html) {
+function parseHTML(html, phoneNumber) {
   const result = {
-    found: false,
     records: []
   };
 
@@ -145,6 +143,18 @@ function parseHTML(html) {
       html.toLowerCase().includes('not found') ||
       html.includes('Sorry') && html.includes('found')) {
     return result;
+  }
+
+  // Extract network information
+  let network = 'Unknown';
+  if (html.includes('Jazz') || html.includes('Mobilink')) {
+    network = 'Jazz';
+  } else if (html.includes('Telenor')) {
+    network = 'Telenor';
+  } else if (html.includes('Ufone')) {
+    network = 'Ufone';
+  } else if (html.includes('Zong')) {
+    network = 'Zong';
   }
 
   // Look for table rows
@@ -191,15 +201,13 @@ function parseHTML(html) {
         cnic: formatCNIC(cells[2] || ''),
         address: cells[3] || '',
         status: cells[4] || 'Unknown',
-        brand: cells[5] || 'Unknown',
-        country: 'Pakistan',
-        timestamp: new Date().toISOString()
+        network: network,  // Network added here
+        country: 'Pakistan'
       };
 
       // Validate record has at least mobile or name
       if (record.mobile || record.name) {
         result.records.push(record);
-        result.found = true;
       }
     }
   }
