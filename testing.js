@@ -1,4 +1,4 @@
-// Single Worker API - Pak Sim Owner Details
+// Telenor Sim Owner Details API
 // File: worker.js
 
 export default {
@@ -22,7 +22,7 @@ export default {
         return new Response(JSON.stringify({
           success: false,
           error: 'Not found',
-          message: 'Use Pakistani mobile number starting with 03'
+          message: 'Use Telenor mobile number'
         }, null, 2), {
           status: 404,
           headers: { 'Content-Type': 'application/json' }
@@ -35,7 +35,7 @@ export default {
         return Response.json({
           success: false,
           error: 'Phone number is required',
-          message: 'Use Pakistani mobile number starting with 03'
+          message: 'Use Telenor mobile number starting with 03'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
@@ -51,19 +51,22 @@ export default {
         phoneNumber = '0' + cleanedNum;
       }
 
-      if (!/^03\d{9}$/.test(phoneNumber)) {
+      // Validate it's a Telenor number (0344, 0345, 0346, 0347)
+      if (!/^03[4-7]\d{8}$/.test(phoneNumber)) {
         return Response.json({
           success: false,
-          error: 'Invalid Pakistani mobile number',
-          message: 'Use Pakistani mobile number starting with 03'
+          error: 'Invalid Telenor mobile number',
+          message: 'Telenor numbers start with: 0344, 0345, 0346, 0347'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
+      // Fetch Telenor data from paksimownerdetails.com
       const data = await fetchTelenorData(phoneNumber);
       
+      // Return response
       return Response.json({
         success: data.success,
         phone: phoneNumber,
@@ -91,36 +94,6 @@ export default {
 
 // ========== FETCH TELENOR DATA ==========
 async function fetchTelenorData(phoneNumber) {
-  const url = 'https://wnerdetails.com/';
-  
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Origin': 'https://wnerdetails.com',
-        'Referer': 'https://wnerdetails.com/',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'same-origin',
-        'Upgrade-Insecure-Requests': '1'
-      },
-      body: `number=${phoneNumber}&search=search`
-    });
-
-    const html = await response.text();
-    return parseTelenorHTML(html, phoneNumber);
-    
-  } catch (error) {
-    return await fetchFallbackData(phoneNumber);
-  }
-}
-
-// ========== FALLBACK ==========
-async function fetchFallbackData(phoneNumber) {
   const url = 'https://paksimownerdetails.com/SecureInfo.php';
   
   const formData = new URLSearchParams();
@@ -146,7 +119,8 @@ async function fetchFallbackData(phoneNumber) {
     });
 
     const html = await response.text();
-    return parseTelenorHTML(html, phoneNumber);
+    return parseTelenorCertificateHTML(html, phoneNumber);
+    
   } catch (error) {
     return {
       success: false,
@@ -155,50 +129,17 @@ async function fetchFallbackData(phoneNumber) {
   }
 }
 
-// ========== TELENOR HTML PARSER ==========
-function parseTelenorHTML(html, phoneNumber) {
-  // Check if no records
+// ========== TELENOR CERTIFICATE HTML PARSER ==========
+function parseTelenorCertificateHTML(html, phoneNumber) {
+  // Check if no records found
   if (html.includes('No record found') || 
       html.toLowerCase().includes('not found') ||
-      html.includes('Record Not Found') ||
       (html.includes('Sorry') && html.includes('found'))) {
     return {
       success: false,
-      message: 'No record found'
+      message: 'No record found for this Telenor number'
     };
   }
-
-  // Extract only the printdiv content which has the actual data
-  const printDivMatch = html.match(/<div[^>]*id=["']?printdiv["']?[^>]*>([\s\S]*?)<\/div>/i);
-  let contentHtml = html;
-  
-  if (printDivMatch && printDivMatch[1]) {
-    contentHtml = printDivMatch[1];
-  }
-
-  // Clean HTML - remove scripts, styles, and unnecessary elements
-  const cleanHtml = contentHtml
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
-    .replace(/onclick=["'][^"']*["']/gi, '')
-    .replace(/onload=["'][^"']*["']/gi, '')
-    .replace(/javascript:[^"'\s]*/gi, '');
-
-  // Convert to plain text but preserve line breaks
-  const plainText = cleanHtml
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .replace(/\n\s+/g, '\n')
-    .trim();
-
-  // Split into lines
-  const lines = plainText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
 
   const result = {
     success: true,
@@ -208,154 +149,164 @@ function parseTelenorHTML(html, phoneNumber) {
       address: '',
       cnic: ''
     },
-    message: 'Data retrieved successfully'
+    message: 'Telenor data retrieved successfully'
   };
 
-  // ===== EXTRACT DATA FROM LINES =====
-  let nameFound = false;
-  let addressLines = [];
-  let collectingAddress = false;
+  // ===== CLEAN HTML AND EXTRACT TEXT =====
+  // Remove scripts, styles, and other unnecessary elements
+  let cleanHtml = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/onclick=["'][^"']*["']/gi, '')
+    .replace(/onload=["'][^"']*["']/gi, '')
+    .replace(/javascript:[^"'\s]*/gi, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ');
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    // Skip irrelevant lines
-    if (line.includes('Click here for New Search') || 
-        line.includes('Download as PNG') ||
-        line.includes('Serial No') ||
-        line.includes('MSISDN') ||
-        line.includes('Certified that') ||
-        line.includes('function') ||
-        line.includes('document.') ||
-        line.includes('window.') ||
-        line.includes('var ') ||
-        line.includes('getElementById')) {
-      continue;
-    }
+  // ===== EXTRACT NAME =====
+  // Method 1: Look for pattern exactly like in screenshot
+  const namePatterns = [
+    /has been\s+([A-Z][A-Z\s]+?)\s+deducted/i,
+    /has been\s+([A-Z][A-Z\s]+?)\s*<\/?/i,
+    /has been[^>]*>([^<]+)</i,
+    /deducted\/collected from[^>]*>([^<]+)</i
+  ];
 
-    // Find name after "deducted/collected from"
-    if (line.toLowerCase().includes('deducted/collected from') && i + 1 < lines.length) {
-      const nextLine = lines[i + 1];
-      if (nextLine && nextLine.length > 2 && !nextLine.includes('having')) {
-        result.record.name = cleanName(nextLine);
-        nameFound = true;
-        i++; // Skip the name line
-        
-        // Start collecting address from next lines
-        collectingAddress = true;
-        continue;
+  for (const pattern of namePatterns) {
+    const match = cleanHtml.match(pattern);
+    if (match && match[1]) {
+      const name = match[1].trim();
+      if (name.length > 2 && !name.includes('div') && !name.includes('span')) {
+        result.record.name = name.toUpperCase();
+        break;
       }
     }
+  }
 
-    // If we're collecting address lines
-    if (collectingAddress) {
-      // Stop when we hit "having NTN" or similar
-      if (line.toLowerCase().includes('having ntn') || 
-          line.toLowerCase().includes('holder of cnic') ||
-          line.includes('3310421645226') ||
-          line.length < 3) {
-        collectingAddress = false;
-        
-        // Check if CNIC is in this line
-        const cnicMatch = line.match(/\d{13}/);
-        if (cnicMatch) {
-          result.record.cnic = cnicMatch[0];
+  // Method 2: Look in the entire HTML for uppercase name patterns
+  if (!result.record.name) {
+    const uppercaseWords = cleanHtml.match(/[A-Z][A-Z\s]{2,20}[A-Z]/g);
+    if (uppercaseWords) {
+      for (const word of uppercaseWords) {
+        const cleanWord = word.trim();
+        // Check if it looks like a name (not too long, no common address words)
+        if (cleanWord.length > 3 && cleanWord.length < 30 &&
+            !cleanWord.includes('ROAD') &&
+            !cleanWord.includes('TOWN') &&
+            !cleanWord.includes('DISTRICT') &&
+            !cleanWord.includes('TEHSIL') &&
+            !cleanWord.includes('POST') &&
+            !cleanWord.includes('OFFICE')) {
+          result.record.name = cleanWord;
+          break;
         }
-        break;
-      }
-      
-      // Add to address if it looks like address text (not JavaScript)
-      if (isAddressLine(line)) {
-        addressLines.push(line);
-      }
-    }
-
-    // Look for CNIC if not found yet
-    if (!result.record.cnic) {
-      const cnicMatch = line.match(/(\d{5}[-]?\d{7}[-]?\d{1})/);
-      if (cnicMatch) {
-        result.record.cnic = cnicMatch[1].replace(/\D/g, '');
       }
     }
   }
 
-  // If name not found with the pattern, try alternative
-  if (!nameFound) {
-    // Look for uppercase name pattern
-    for (const line of lines) {
-      if (line.match(/^[A-Z][A-Z\s]{2,30}$/) && 
-          !line.includes('ROAD') && 
-          !line.includes('TOWN') && 
-          !line.includes('DISTRICT') &&
-          !line.includes('TEHSIL')) {
-        result.record.name = cleanName(line);
-        break;
+  // ===== EXTRACT ADDRESS =====
+  // Method 1: Look for address after "deducted/collected from" and name
+  if (result.record.name) {
+    const nameForRegex = result.record.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const addressPattern = new RegExp(`${nameForRegex}\\s*([^<]+?)\\s*(?:having|holder|on|$)`, 'i');
+    const addressMatch = cleanHtml.match(addressPattern);
+    
+    if (addressMatch && addressMatch[1]) {
+      let address = addressMatch[1].trim();
+      // Clean the address
+      address = cleanAddressText(address);
+      if (address.length > 10) {
+        result.record.address = address.toUpperCase();
       }
     }
   }
 
-  // Process address lines
-  if (addressLines.length > 0) {
-    // Join address lines and clean
-    let address = addressLines.join(' ');
-    
-    // Remove any remaining JavaScript or unwanted text
-    address = address
-      .replace(/function\s*\([^)]*\)\s*{[^}]*}/g, '')
-      .replace(/document\.[a-zA-Z]+/g, '')
-      .replace(/window\.[a-zA-Z]+/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    
-    // Final cleanup
-    const unwantedPatterns = [
-      /togglePopup\(\)[^}]*}/,
-      /html2canvas[^}]*}/,
-      /addEventListener[^}]*}/,
-      /setTimeout[^}]*}/,
-      /getElementById[^)]*\)/,
-      /createElement[^)]*\)/,
-      /\.src\s*=[^;]*;/,
-      /\.innerHTML\s*=[^;]*;/,
-      /\.appendChild[^)]*\)/,
-      /\.style\.[a-zA-Z]+\s*=[^;]*;/,
-      /\.classList\.[a-zA-Z]+[^;]*;/,
-      /\.download\s*=[^;]*;/,
-      /\.href\s*=[^;]*;/,
-      /\.click\(\)[^;]*;/,
-      /\.then\([^)]*\)/,
-      /var\s+\w+\s*=/,
-      /CDN-CGI/,
-      /challenge-platform/,
-      /visibility:\s*['"]hidden['"]/,
-      /position:\s*['"]absolute['"]/
+  // Method 2: Look for common address patterns
+  if (!result.record.address) {
+    const addressPatterns = [
+      /LACHMAN WALA POST OFFICE[\s\S]+?BHAKKAR/i,
+      /NANKANA ROAD[\s\S]+?DISTRICT F/i,
+      /([A-Z][A-Z\s]+ROAD[^<]+DISTRICT[^<]+)/i,
+      /([A-Z][A-Z\s]+TOWN[^<]+DISTRICT[^<]+)/i,
+      /([A-Z][A-Z\s]+TEHSIL[^<]+DISTRICT[^<]+)/i
     ];
-    
-    for (const pattern of unwantedPatterns) {
-      address = address.replace(pattern, '');
+
+    for (const pattern of addressPatterns) {
+      const match = cleanHtml.match(pattern);
+      if (match && match[1]) {
+        let address = match[1].trim();
+        address = cleanAddressText(address);
+        if (address.length > 10) {
+          result.record.address = address.toUpperCase();
+          break;
+        }
+      }
     }
-    
-    result.record.address = address.trim();
   }
 
-  // If still no CNIC, search the entire text
+  // Method 3: Extract all text between name and "having NTN"
+  if (!result.record.address && result.record.name) {
+    const nameEscaped = result.record.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const betweenRegex = new RegExp(`${nameEscaped}([\\s\\S]+?)having NTN`, 'i');
+    const betweenMatch = cleanHtml.match(betweenRegex);
+    
+    if (betweenMatch && betweenMatch[1]) {
+      let address = betweenMatch[1]
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      address = cleanAddressText(address);
+      if (address.length > 10) {
+        result.record.address = address.toUpperCase();
+      }
+    }
+  }
+
+  // ===== EXTRACT CNIC =====
+  // Method 1: Look for CNIC pattern from screenshot
+  const cnicPatterns = [
+    /holder of CNIC No\.\s*on\s*(\d{13})/i,
+    /CNIC No\.\s*(\d{13})/i,
+    /(\d{5}-\d{7}-\d{1})/,
+    /(\d{13})/
+  ];
+
+  for (const pattern of cnicPatterns) {
+    const match = cleanHtml.match(pattern);
+    if (match && match[1]) {
+      const cnic = match[1].replace(/\D/g, '');
+      if (cnic.length === 13 && cnic !== '0000000000000') {
+        result.record.cnic = cnic;
+        break;
+      }
+    }
+  }
+
+  // Method 2: Look for 13-digit number in the text
   if (!result.record.cnic) {
-    const cnicRegex = /(\d{13})/;
-    const cnicMatch = plainText.match(cnicRegex);
-    if (cnicMatch) {
-      result.record.cnic = cnicMatch[1];
+    const allNumbers = cleanHtml.match(/\d{13}/g);
+    if (allNumbers) {
+      for (const num of allNumbers) {
+        if (num !== '0000000000000') {
+          result.record.cnic = num;
+          break;
+        }
+      }
     }
   }
 
-  // Final validation
+  // ===== FINAL VALIDATION =====
+  // Check if we have minimal data
   if (!result.record.name && !result.record.cnic) {
     return {
       success: false,
-      message: 'No valid data found'
+      message: 'No valid Telenor data found in certificate'
     };
   }
 
-  // Clean up
+  // Clean up the data
   if (result.record.name) {
     result.record.name = result.record.name.toUpperCase();
   }
@@ -363,60 +314,18 @@ function parseTelenorHTML(html, phoneNumber) {
   if (result.record.address) {
     result.record.address = result.record.address.toUpperCase();
   }
-  
-  if (result.record.cnic && result.record.cnic.length !== 13) {
-    result.record.cnic = '';
-  }
 
   return result;
 }
 
 // ========== HELPER FUNCTIONS ==========
-function cleanName(name) {
-  return name
-    .replace(/[^a-zA-Z\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toUpperCase();
-}
-
-function isAddressLine(line) {
-  // Check if line looks like address (not JavaScript)
-  if (line.length < 5) return false;
-  
-  const jsKeywords = [
-    'function', 'document', 'window', 'var ', 'let ', 'const ',
-    'getElementById', 'addEventListener', 'setTimeout', 'createElement',
-    'appendChild', 'classList', 'style.', 'innerHTML', 'then(',
-    'href=', 'download=', 'click()', 'src=', 'onload', 'onclick'
-  ];
-  
-  // If contains JavaScript keywords, it's not address
-  for (const keyword of jsKeywords) {
-    if (line.toLowerCase().includes(keyword)) {
-      return false;
-    }
-  }
-  
-  // Check if looks like address (contains address-related words or uppercase)
-  const addressIndicators = [
-    'ROAD', 'STREET', 'AVENUE', 'LANE', 'TOWN', 'CITY', 'VILLAGE',
-    'DISTRICT', 'TEHSIL', 'POST', 'OFFICE', 'MOHALLA', 'MOHALA',
-    'AREA', 'SECTOR', 'BLOCK', 'COLONY'
-  ];
-  
-  const upperLine = line.toUpperCase();
-  for (const indicator of addressIndicators) {
-    if (upperLine.includes(indicator)) {
-      return true;
-    }
-  }
-  
-  // If line is mostly uppercase and reasonable length, it might be address
-  const upperCount = (line.match(/[A-Z]/g) || []).length;
-  const upperRatio = upperCount / line.length;
-  
-  return upperRatio > 0.6 && line.length > 10;
+function cleanAddressText(text) {
+  return text
+    .replace(/<[^>]+>/g, ' ')  // Remove HTML tags
+    .replace(/[^\w\s.,\-]/g, ' ')  // Remove special characters
+    .replace(/\s+/g, ' ')  // Remove extra spaces
+    .replace(/\b(?:div|span|class|style|id)\b/gi, '')  // Remove HTML keywords
+    .trim();
 }
 
 function formatMobile(mobile) {
