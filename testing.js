@@ -57,16 +57,16 @@ export default {
       }
 
       // Validate Telenor number format (0344, 0345, 0346, 0347)
-      if (!/^03[4-7]\d{7}$/.test(phoneNumber)) {
-        return Response.json({
-          success: false,
-          error: 'Invalid Telenor mobile number',
-          message: 'Telenor numbers start with: 0344, 0345, 0346, 0347'
-        }, {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
+if (!/^03[4-7]\d{8}$/.test(phoneNumber)) {
+  return Response.json({
+    success: false,
+    error: 'Invalid Telenor mobile number',
+    message: 'Telenor numbers start with: 0344, 0345, 0346, 0347 and have 11 digits total'
+  }, {
+    status: 400,
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
 
       // Fetch Telenor data
       const data = await fetchTelenorData(phoneNumber);
