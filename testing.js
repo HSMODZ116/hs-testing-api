@@ -23,11 +23,11 @@ export default {
         return jsonResponse({ success: true, phone, records: [] });
       }
 
-      // Fetch CNIC records from first result
+      // Fetch CNIC records from first row
       const cnic = phoneRecords[0].CNIC;
       const cnicRecords = cnic ? await fetchRecords(cnic) : [];
 
-      // Merge & deduplicate
+      // Merge + Deduplicate
       const all = [...phoneRecords, ...cnicRecords];
       const unique = [];
       const seen = new Set();
@@ -58,21 +58,22 @@ export default {
   },
 };
 
-/* ------------------------- JSON Response Helper ------------------------- */
+/* ------------------------- JSON RESPONSE ------------------------- */
 function jsonResponse(obj, status = 200) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: { "Content-Type": "application/json" },
   });
 }
 
-/* ------------------------- Fetch Records ------------------------- */
+/* ------------------------- FETCH RECORDS ------------------------- */
 
 async function fetchRecords(value) {
   const POST_URL = "https://paksimownerdetails.com/SecureInfo.php";
 
-  const payload =
-    "numberCnic=" + encodeURIComponent(value) + "&searchNumber=search";
+  const payload = `cnic=${encodeURIComponent(
+    value
+  )}&search=Search`;
 
   const headers = {
     "User-Agent":
@@ -93,7 +94,7 @@ async function fetchRecords(value) {
   return parseTableHtml(html);
 }
 
-/* ------------------------- HTML Table Parser ------------------------- */
+/* ------------------------- HTML TABLE PARSER ------------------------- */
 
 function parseTableHtml(html) {
   const rows = [];
@@ -106,10 +107,7 @@ function parseTableHtml(html) {
 
     const cols = [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(
       (m) =>
-        m[1]
-          .replace(/<[^>]+>/g, "")
-          .replace(/\s+/g, " ")
-          .trim()
+        m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim()
     );
 
     if (cols.length >= 3) {
