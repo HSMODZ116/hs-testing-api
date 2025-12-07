@@ -69,7 +69,7 @@ function jsonResponse(obj, status = 200) {
 /* ------------------------- Fetch Records ------------------------- */
 
 async function fetchRecords(value) {
-  const POST_URL = "https://freshsimdata.net/numberDetails.php";
+  const POST_URL = "https://paksimownerdetails.com/numberDetails.php";
 
   const payload =
     "numberCnic=" + encodeURIComponent(value) + "&searchNumber=search";
@@ -80,7 +80,7 @@ async function fetchRecords(value) {
     Accept:
       "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Content-Type": "application/x-www-form-urlencoded",
-    Referer: "https://freshsimdata.net/",
+    Referer: "https://paksimownerdetails.com/",
   };
 
   const res = await fetch(POST_URL, {
