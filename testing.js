@@ -72,14 +72,12 @@ export default {
 
         // Validate Pakistani number format
         if (!/^03\d{9}$/.test(searchValue)) {
-          // If not valid phone, check if it might be something else
           return Response.json({
             success: false,
-            error: 'Invalid input',
+            error: 'Invalid phone number',
             received: num,
-            cleaned: cleanedNum,
-            expected: 'Phone number (03XXXXXXXXX - 11 digits) or CNIC (13 digits)',
-            note: 'For phone: Must start with 03 and be 11 digits total. For CNIC: Must be 13 digits.'
+            cleaned: searchValue,
+            expected: 'Phone number (03XXXXXXXXX - 11 digits)'
           }, {
             status: 400,
             headers: { 'Content-Type': 'application/json' }
@@ -126,7 +124,11 @@ async function fetchData(searchType, searchValue) {
   if (searchType === 'phone') {
     formData.append('number', searchValue);
   } else {
-    formData.append('cnic', searchValue);
+    // CNIC ko format karna zaroori hai: XXXXX-XXXXXXX-X
+    const formattedCNIC = searchValue.substring(0, 5) + '-' + 
+                         searchValue.substring(5, 12) + '-' + 
+                         searchValue.substring(12);
+    formData.append('cnic', formattedCNIC);
   }
   
   formData.append('search', 'search');
@@ -161,71 +163,101 @@ function parseHTML(html) {
   // Check if no records found
   if (html.includes('No record found') || 
       html.toLowerCase().includes('not found') ||
-      html.includes('Sorry') && html.includes('found')) {
+      (html.includes('Sorry') && html.includes('found')) ||
+      html.includes('Please try with other') ||
+      html.includes('Invalid CNIC')) {
     return result;
   }
 
-  // Look for table rows
-  const rows = [];
-  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  let rowMatch;
+  // Debug: Log first 2000 characters to see HTML structure
+  // console.log('HTML first 2000 chars:', html.substring(0, 2000));
 
-  while ((rowMatch = rowRegex.exec(html))) {
-    rows.push(rowMatch[1]);
-  }
-
-  // Skip header row (first row with th tags)
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    
-    // Skip header row
-    if (row.includes('<th>') || row.toLowerCase().includes('mobile') && 
-        row.toLowerCase().includes('name') && row.toLowerCase().includes('cnic')) {
-      continue;
-    }
-
-    // Extract cells from row
-    const cells = [];
-    const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
-    let cellMatch;
-
-    while ((cellMatch = cellRegex.exec(row))) {
-      let content = cellMatch[1]
-        .replace(/<[^>]+>/g, '')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      
-      // Clean emojis and extra spaces
-      content = content.replace(/[^\x00-\x7F]/g, '').trim();
-      cells.push(content);
-    }
-
-    // We need at least 5 columns: Number, Name, CNIC, Address, Network
-    if (cells.length >= 4) {
-      const record = {
-        mobile: formatMobile(cells[0] || ''),
-        name: cells[1] || '',
-        cnic: formatCNIC(cells[2] || ''),
-        address: cells[3] || '',
-        status: 'Active',
-        country: 'Pakistan'
-      };
-
-      // Add network if available (5th column)
-      if (cells.length >= 5) {
-        // Remove emojis and clean network name
-        record.network = cells[4].replace(/[^\x00-\x7F]/g, '').trim();
-      }
-
-      // Validate record has at least mobile or name
-      if (record.mobile || record.name) {
-        result.records.push(record);
-      }
+  // Extract data using more robust method
+  // Look for table data
+  const rows = extractTableRows(html);
+  
+  for (const row of rows) {
+    const record = parseTableRow(row);
+    if (record && (record.mobile || record.name)) {
+      result.records.push(record);
     }
   }
 
   return result;
+}
+
+// ========== TABLE EXTRACTION FUNCTIONS ==========
+function extractTableRows(html) {
+  const rows = [];
+  
+  // Find table start
+  const tableStart = html.indexOf('<table');
+  if (tableStart === -1) return rows;
+  
+  // Find table end
+  const tableEnd = html.indexOf('</table>', tableStart);
+  if (tableEnd === -1) return rows;
+  
+  const tableHTML = html.substring(tableStart, tableEnd);
+  
+  // Extract all rows
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let match;
+  
+  while ((match = rowRegex.exec(tableHTML)) !== null) {
+    rows.push(match[1]);
+  }
+  
+  return rows;
+}
+
+function parseTableRow(rowHTML) {
+  // Skip header rows
+  if (rowHTML.includes('<th>') || 
+      rowHTML.toLowerCase().includes('mobile') || 
+      rowHTML.toLowerCase().includes('cnic') ||
+      rowHTML.toLowerCase().includes('number') ||
+      rowHTML.toLowerCase().includes('name')) {
+    return null;
+  }
+
+  const cells = [];
+  const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+  let cellMatch;
+  
+  while ((cellMatch = cellRegex.exec(rowHTML)) !== null) {
+    let content = cellMatch[1]
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    // Clean emojis and special characters but keep basic text
+    content = content.replace(/[^\x00-\x7F\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/g, '').trim();
+    cells.push(content);
+  }
+
+  // We need at least 4 columns: Number, Name, CNIC, Address
+  if (cells.length >= 4) {
+    const record = {
+      mobile: formatMobile(cells[0] || ''),
+      name: cells[1] || '',
+      cnic: formatCNIC(cells[2] || ''),
+      address: cells[3] || '',
+      status: 'Active',
+      country: 'Pakistan'
+    };
+
+    // Add network if available (5th column)
+    if (cells.length >= 5) {
+      record.network = cells[4].replace(/[^\x00-\x7F]/g, '').trim() || 'Unknown';
+    }
+
+    return record;
+  }
+  
+  return null;
 }
 
 // ========== HELPER FUNCTIONS ==========
