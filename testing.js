@@ -23,7 +23,7 @@ export default {
         return new Response(JSON.stringify({
           success: false,
           error: 'Not found',
-          message: 'Use: /?num=03001234567 or /?num=3810390345114'
+          message: 'Use: /?num=03001234567 or /?num=3810360039127'
         }, null, 2), {
           status: 404,
           headers: { 'Content-Type': 'application/json' }
@@ -39,7 +39,7 @@ export default {
           success: false,
           error: 'Number is required',
           example_phone: 'https://api.your-worker.workers.dev/?num=03001234567',
-          example_cnic: 'https://api.your-worker.workers.dev/?num=3810390345114',
+          example_cnic: 'https://api.your-worker.workers.dev/?num=3810360039127',
           description: 'Parameter can be either phone number (11 digits starting with 03) or CNIC (13 digits)'
         }, {
           status: 400,
@@ -124,14 +124,32 @@ async function fetchData(searchType, searchValue) {
   if (searchType === 'phone') {
     formData.append('number', searchValue);
   } else {
-    // CNIC ko format karna zaroori hai: XXXXX-XXXXXXX-X
-    const formattedCNIC = searchValue.substring(0, 5) + '-' + 
-                         searchValue.substring(5, 12) + '-' + 
-                         searchValue.substring(12);
-    formData.append('cnic', formattedCNIC);
+    // Try different CNIC formats
+    // Format 1: With dashes (XXXXX-XXXXXXX-X)
+    const formattedCNIC1 = searchValue.substring(0, 5) + '-' + 
+                          searchValue.substring(5, 12) + '-' + 
+                          searchValue.substring(12);
+    
+    // Format 2: Without dashes (plain 13 digits)
+    const formattedCNIC2 = searchValue;
+    
+    // Format 3: With spaces
+    const formattedCNIC3 = searchValue.substring(0, 5) + ' ' + 
+                          searchValue.substring(5, 12) + ' ' + 
+                          searchValue.substring(12);
+    
+    // Try first format (most common)
+    formData.append('cnic', formattedCNIC1);
   }
   
   formData.append('search', 'search');
+
+  console.log('Sending request with:', {
+    url: url,
+    searchType: searchType,
+    searchValue: searchValue,
+    formData: formData.toString()
+  });
 
   const response = await fetch(url, {
     method: 'POST',
@@ -151,6 +169,11 @@ async function fetchData(searchType, searchValue) {
   });
 
   const html = await response.text();
+  
+  // Debug: Save HTML for inspection
+  // console.log('Response HTML length:', html.length);
+  // console.log('Response first 2000 chars:', html.substring(0, 2000));
+  
   return parseHTML(html);
 }
 
@@ -161,103 +184,188 @@ function parseHTML(html) {
   };
 
   // Check if no records found
-  if (html.includes('No record found') || 
-      html.toLowerCase().includes('not found') ||
-      (html.includes('Sorry') && html.includes('found')) ||
-      html.includes('Please try with other') ||
-      html.includes('Invalid CNIC')) {
-    return result;
+  const noRecordsPatterns = [
+    'No record found',
+    'not found',
+    'Sorry.*found',
+    'Please try with other',
+    'Invalid CNIC',
+    'No Data Found',
+    'Record not found',
+    '0 Records Found'
+  ];
+
+  const lowerHTML = html.toLowerCase();
+  for (const pattern of noRecordsPatterns) {
+    if (lowerHTML.includes(pattern.toLowerCase())) {
+      return result;
+    }
   }
 
-  // Debug: Log first 2000 characters to see HTML structure
-  // console.log('HTML first 2000 chars:', html.substring(0, 2000));
+  // Try to find data in HTML
+  // Method 1: Look for table structure
+  const tableRegex = /<table[^>]*>([\s\S]*?)<\/table>/gi;
+  let tableMatch = tableRegex.exec(html);
+  
+  if (!tableMatch) {
+    // Method 2: Look for specific data patterns
+    return extractDataFromPatterns(html);
+  }
 
-  // Extract data using more robust method
-  // Look for table data
-  const rows = extractTableRows(html);
+  // Process table data
+  const tableContent = tableMatch[1];
+  const rows = extractRowsFromTable(tableContent);
   
   for (const row of rows) {
-    const record = parseTableRow(row);
-    if (record && (record.mobile || record.name)) {
+    const record = extractRecordFromRow(row);
+    if (record && (record.mobile || record.name || record.cnic)) {
       result.records.push(record);
+    }
+  }
+
+  // If no records found in table, try alternative extraction
+  if (result.records.length === 0) {
+    return extractDataFromPatterns(html);
+  }
+
+  return result;
+}
+
+function extractRowsFromTable(tableHTML) {
+  const rows = [];
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+  
+  while ((rowMatch = rowRegex.exec(tableHTML)) !== null) {
+    const rowContent = rowMatch[1];
+    
+    // Skip empty rows and header rows
+    if (rowContent.includes('<th>') || 
+        rowContent.toLowerCase().includes('number') ||
+        rowContent.toLowerCase().includes('name') ||
+        rowContent.toLowerCase().includes('cnic') ||
+        rowContent.toLowerCase().includes('address')) {
+      continue;
+    }
+    
+    // Check if row has actual data (contains digits for phone or CNIC)
+    if (/\d{10,}/.test(rowContent)) {
+      rows.push(rowContent);
+    }
+  }
+  
+  return rows;
+}
+
+function extractRecordFromRow(rowHTML) {
+  // Extract all table cells
+  const cells = [];
+  const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+  let cellMatch;
+  
+  while ((cellMatch = cellRegex.exec(rowHTML)) !== null) {
+    let content = cleanHTMLContent(cellMatch[1]);
+    cells.push(content);
+  }
+
+  // Different column arrangements are possible
+  if (cells.length >= 3) {
+    // Try to identify which cell contains what
+    const record = {
+      mobile: '',
+      name: '',
+      cnic: '',
+      address: '',
+      status: 'Active',
+      country: 'Pakistan'
+    };
+
+    for (let i = 0; i < cells.length; i++) {
+      const cell = cells[i];
+      
+      // Check for mobile number
+      if (/^0?3\d{9}$/.test(cell.replace(/\D/g, '')) && !record.mobile) {
+        record.mobile = formatMobile(cell);
+      }
+      // Check for CNIC
+      else if (cell.replace(/\D/g, '').length === 13 && !record.cnic) {
+        record.cnic = formatCNIC(cell);
+      }
+      // Check for name (contains letters, not just digits)
+      else if (/[a-zA-Z]/.test(cell) && !/\d{10,}/.test(cell) && !record.name) {
+        record.name = cell;
+      }
+      // Check for address (usually longer text)
+      else if (cell.length > 10 && !record.address && !/^0?3\d{9}$/.test(cell.replace(/\D/g, '')) && cell.replace(/\D/g, '').length !== 13) {
+        record.address = cell;
+      }
+    }
+
+    // If we found at least mobile or CNIC or name, return the record
+    if (record.mobile || record.cnic || record.name) {
+      return record;
+    }
+  }
+  
+  return null;
+}
+
+function extractDataFromPatterns(html) {
+  const result = {
+    records: []
+  };
+
+  // Look for specific patterns in the HTML
+  // Pattern 1: Look for mobile numbers
+  const mobileRegex = /0?3\d{2}[\s-]?\d{7}/g;
+  const mobiles = html.match(mobileRegex) || [];
+
+  // Pattern 2: Look for CNIC numbers
+  const cnicRegex = /\b\d{5}[\s-]?\d{7}[\s-]?\d\b/g;
+  const cnicMatches = html.match(cnicRegex) || [];
+
+  // Pattern 3: Look for names (between tags)
+  const nameRegex = /<td[^>]*>([A-Za-z\s\.]+)<\/td>/gi;
+  const names = [];
+  let nameMatch;
+  while ((nameMatch = nameRegex.exec(html)) !== null) {
+    const name = cleanHTMLContent(nameMatch[1]);
+    if (name.length > 2) {
+      names.push(name);
+    }
+  }
+
+  // Try to create records from found data
+  if (mobiles.length > 0) {
+    for (let i = 0; i < Math.min(mobiles.length, names.length); i++) {
+      const record = {
+        mobile: formatMobile(mobiles[i]),
+        name: names[i] || '',
+        cnic: cnicMatches[i] ? formatCNIC(cnicMatches[i]) : '',
+        address: '',
+        status: 'Active',
+        country: 'Pakistan'
+      };
+      
+      if (record.mobile || record.name) {
+        result.records.push(record);
+      }
     }
   }
 
   return result;
 }
 
-// ========== TABLE EXTRACTION FUNCTIONS ==========
-function extractTableRows(html) {
-  const rows = [];
-  
-  // Find table start
-  const tableStart = html.indexOf('<table');
-  if (tableStart === -1) return rows;
-  
-  // Find table end
-  const tableEnd = html.indexOf('</table>', tableStart);
-  if (tableEnd === -1) return rows;
-  
-  const tableHTML = html.substring(tableStart, tableEnd);
-  
-  // Extract all rows
-  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  let match;
-  
-  while ((match = rowRegex.exec(tableHTML)) !== null) {
-    rows.push(match[1]);
-  }
-  
-  return rows;
-}
-
-function parseTableRow(rowHTML) {
-  // Skip header rows
-  if (rowHTML.includes('<th>') || 
-      rowHTML.toLowerCase().includes('mobile') || 
-      rowHTML.toLowerCase().includes('cnic') ||
-      rowHTML.toLowerCase().includes('number') ||
-      rowHTML.toLowerCase().includes('name')) {
-    return null;
-  }
-
-  const cells = [];
-  const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
-  let cellMatch;
-  
-  while ((cellMatch = cellRegex.exec(rowHTML)) !== null) {
-    let content = cellMatch[1]
-      .replace(/<[^>]+>/g, '')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/\s+/g, ' ')
-      .trim();
-    
-    // Clean emojis and special characters but keep basic text
-    content = content.replace(/[^\x00-\x7F\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/g, '').trim();
-    cells.push(content);
-  }
-
-  // We need at least 4 columns: Number, Name, CNIC, Address
-  if (cells.length >= 4) {
-    const record = {
-      mobile: formatMobile(cells[0] || ''),
-      name: cells[1] || '',
-      cnic: formatCNIC(cells[2] || ''),
-      address: cells[3] || '',
-      status: 'Active',
-      country: 'Pakistan'
-    };
-
-    // Add network if available (5th column)
-    if (cells.length >= 5) {
-      record.network = cells[4].replace(/[^\x00-\x7F]/g, '').trim() || 'Unknown';
-    }
-
-    return record;
-  }
-  
-  return null;
+function cleanHTMLContent(content) {
+  return content
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // ========== HELPER FUNCTIONS ==========
