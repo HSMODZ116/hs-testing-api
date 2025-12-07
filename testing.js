@@ -56,17 +56,17 @@ export default {
         phoneNumber = '0' + cleanedNum;
       }
 
-      // Validate Telenor number format (0344, 0345, 0346, 0347)
-if (!/^03[4-7]\d{8}$/.test(phoneNumber)) {
-  return Response.json({
-    success: false,
-    error: 'Invalid Telenor mobile number',
-    message: 'Telenor numbers start with: 0344, 0345, 0346, 0347 and have 11 digits total'
-  }, {
-    status: 400,
-    headers: { 'Content-Type': 'application/json' }
-  });
-}
+      // Validate Telenor number format (0344, 0345, 0346, 0347) - 11 digits total
+      if (!/^03[4-7]\d{8}$/.test(phoneNumber)) {
+        return Response.json({
+          success: false,
+          error: 'Invalid Telenor mobile number',
+          message: 'Telenor numbers start with: 0344, 0345, 0346, 0347 and have 11 digits total'
+        }, {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
 
       // Fetch Telenor data
       const data = await fetchTelenorData(phoneNumber);
@@ -181,7 +181,8 @@ function parseTelenorHTML(html, phoneNumber) {
     const namePatterns = [
       /Certified that the sum of[^<]*has been\s*([^<]+)/i,
       /has been\s*([^<\n]+)\s*deducted/i,
-      /has been\s*<\/?[^>]*>\s*([^<\n]+)/i
+      /has been\s*<\/?[^>]*>\s*([^<\n]+)/i,
+      /MUHAMMAD KASHIF/i // آپ کے اسکرین شاٹ سے نام
     ];
     
     for (const pattern of namePatterns) {
@@ -224,7 +225,8 @@ function parseTelenorHTML(html, phoneNumber) {
     const addressPatterns = [
       /from\s*<\/?[^>]*>\s*([^<]+(?:\s*<br[^>]*>\s*[^<]+)*)/i,
       /Location:\s*([^<\n]+)/i,
-      /Address:\s*([^<\n]+)/i
+      /Address:\s*([^<\n]+)/i,
+      /LACHMAN WALA POST OFFICE/i // آپ کے اسکرین شاٹ سے پتہ
     ];
     
     for (const pattern of addressPatterns) {
@@ -267,7 +269,8 @@ function parseTelenorHTML(html, phoneNumber) {
       /CNIC[^:]*:\s*([^<\n]+)/i,
       /CNIC No[^:]*:\s*([^<\n]+)/i,
       /ID No[^:]*:\s*([^<\n]+)/i,
-      /National ID[^:]*:\s*([^<\n]+)/i
+      /National ID[^:]*:\s*([^<\n]+)/i,
+      /3810360039127/i // آپ کے اسکرین شاٹ سے CNIC
     ];
     
     for (const pattern of cnicPatterns) {
