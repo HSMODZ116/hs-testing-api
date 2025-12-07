@@ -1,4 +1,4 @@
-// Single Worker API - Pak Sim Owner Details
+// Single Worker API - Pak Sim Owner Details (TELENOR ONLY)
 // File: worker.js
 
 export default {
@@ -23,7 +23,7 @@ export default {
         return new Response(JSON.stringify({
           success: false,
           error: 'Not found',
-          message: 'Use Pakistani mobile number starting with 03'
+          message: 'Use Telenor mobile number'
         }, null, 2), {
           status: 404,
           headers: { 'Content-Type': 'application/json' }
@@ -38,7 +38,7 @@ export default {
         return Response.json({
           success: false,
           error: 'Phone number is required',
-          message: 'Use Pakistani mobile number starting with 03'
+          message: 'Use Telenor mobile number'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
@@ -48,7 +48,7 @@ export default {
       // Clean the input - remove all non-digits
       const cleanedNum = num.toString().replace(/\D/g, '');
       
-      // Add leading zero if needed
+      // Format for Telenor
       let phoneNumber = cleanedNum;
       if (cleanedNum.startsWith('92') && cleanedNum.length === 12) {
         phoneNumber = '0' + cleanedNum.substring(2);
@@ -56,26 +56,27 @@ export default {
         phoneNumber = '0' + cleanedNum;
       }
 
-      // Validate Pakistani number format
-      if (!/^03\d{9}$/.test(phoneNumber)) {
+      // Validate Telenor number format (0344, 0345, 0346, 0347)
+      if (!/^03[4-7]\d{7}$/.test(phoneNumber)) {
         return Response.json({
           success: false,
-          error: 'Invalid Pakistani mobile number',
-          message: 'Use Pakistani mobile number starting with 03'
+          error: 'Invalid Telenor mobile number',
+          message: 'Telenor numbers start with: 0344, 0345, 0346, 0347'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Fetch data from paksimownerdetails.com
-      const data = await fetchData(phoneNumber);
+      // Fetch Telenor data
+      const data = await fetchTelenorData(phoneNumber);
       
-      // Return response with old structure
+      // Return response
       return Response.json({
-        success: true,
+        success: data.success,
         phone: phoneNumber,
-        data: data
+        data: data.record || null,
+        message: data.message
       }, {
         headers: {
           'Content-Type': 'application/json',
@@ -96,102 +97,197 @@ export default {
   }
 };
 
-// ========== FETCH DATA FUNCTION ==========
-async function fetchData(phoneNumber) {
-  const url = 'https://paksimownerdetails.com/SecureInfo.php';
+// ========== FETCH TELENOR DATA FUNCTION ==========
+async function fetchTelenorData(phoneNumber) {
+  // Telenor-specific URL or API endpoint
+  const telenorUrl = 'https://wnerdetails.com/'; // یا Telenor کا مخصوص URL
   
-  // Create form data as per website
-  const formData = new URLSearchParams();
-  formData.append('number', phoneNumber);
-  formData.append('search', 'search');
+  try {
+    // Telenor کے لیے مخصوص فارمیٹ میں ڈیٹا fetch کریں
+    const response = await fetch(telenorUrl, {
+      method: 'POST',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Origin': 'https://wnerdetails.com',
+        'Referer': 'https://wnerdetails.com/',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Upgrade-Insecure-Requests': '1'
+      },
+      body: `number=${phoneNumber}&search=search`
+    });
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Origin': 'https://paksimownerdetails.com',
-      'Referer': 'https://paksimownerdetails.com/',
-      'Sec-Fetch-Dest': 'document',
-      'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'same-origin',
-      'Upgrade-Insecure-Requests': '1'
-    },
-    body: formData.toString()
-  });
-
-  const html = await response.text();
-  return parseHTML(html);
+    const html = await response.text();
+    
+    // Parse Telenor-specific HTML format
+    return parseTelenorHTML(html, phoneNumber);
+    
+  } catch (error) {
+    return {
+      success: false,
+      message: 'Failed to fetch Telenor data'
+    };
+  }
 }
 
-// ========== HTML PARSER ==========
-function parseHTML(html) {
-  const result = {
-    records: []
-  };
-
+// ========== TELENOR HTML PARSER ==========
+function parseTelenorHTML(html, phoneNumber) {
   // Check if no records found
   if (html.includes('No record found') || 
       html.toLowerCase().includes('not found') ||
+      html.includes('Record Not Found') ||
       (html.includes('Sorry') && html.includes('found'))) {
-    return result;
+    return {
+      success: false,
+      message: 'No record found for this Telenor number'
+    };
   }
 
-  // Look for table rows
-  const rows = [];
-  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  let rowMatch;
+  // Initialize result object
+  const result = {
+    success: true,
+    record: {
+      mobile: phoneNumber,
+      name: '',
+      address: '',
+      cnic: '',
+      status: 'Active',
+      network: 'Telenor',
+      operator: 'Telenor Pakistan',
+      country: 'Pakistan',
+      last_updated: new Date().toISOString()
+    },
+    message: 'Data retrieved successfully'
+  };
 
-  while ((rowMatch = rowRegex.exec(html))) {
-    rows.push(rowMatch[1]);
+  // ===== EXTRACT NAME =====
+  // Look for "on account of income tax has been" pattern
+  const nameRegex = /on account of income tax has been\s*<\/?[^>]*>\s*([^<\n]+)/i;
+  const nameMatch = html.match(nameRegex);
+  
+  if (nameMatch && nameMatch[1]) {
+    result.record.name = nameMatch[1]
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .trim();
   }
 
-  // Skip header row (first row with th tags)
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
+  // Alternative name patterns
+  if (!result.record.name) {
+    const namePatterns = [
+      /Certified that the sum of[^<]*has been\s*([^<]+)/i,
+      /has been\s*([^<\n]+)\s*deducted/i,
+      /has been\s*<\/?[^>]*>\s*([^<\n]+)/i
+    ];
     
-    // Skip header row
-    if (row.includes('<th>') || row.toLowerCase().includes('mobile') && 
-        row.toLowerCase().includes('name') && row.toLowerCase().includes('cnic')) {
-      continue;
-    }
-
-    // Extract cells from row
-    const cells = [];
-    const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
-    let cellMatch;
-
-    while ((cellMatch = cellRegex.exec(row))) {
-      let content = cellMatch[1]
-        .replace(/<[^>]+>/g, '')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      
-      // Clean emojis and extra spaces
-      content = content.replace(/[^\x00-\x7F]/g, '').trim();
-      cells.push(content);
-    }
-
-    // We need at least 4 columns: Mobile, Name, CNIC, Address
-    if (cells.length >= 4) {
-      const record = {
-        mobile: formatMobile(cells[0] || ''),
-        name: cells[1] || '',
-        cnic: formatCNIC(cells[2] || ''),
-        address: cells[3] || '',
-        status: cells[4] || 'Active',
-        network: 'Jazz',
-        country: 'Pakistan'
-      };
-
-      // Validate record has at least mobile or name
-      if (record.mobile || record.name) {
-        result.records.push(record);
+    for (const pattern of namePatterns) {
+      const match = html.match(pattern);
+      if (match && match[1]) {
+        result.record.name = match[1]
+          .replace(/<[^>]+>/g, '')
+          .replace(/&nbsp;/g, ' ')
+          .trim();
+        break;
       }
     }
+  }
+
+  // ===== EXTRACT ADDRESS =====
+  // Look for "deducted/collected from" pattern (مکمل پتہ)
+  const addressRegex = /deducted\/collected from\s*<\/?[^>]*>\s*([^<]+(?:\s*<br[^>]*>\s*[^<]+)*)/i;
+  const addressMatch = html.match(addressRegex);
+  
+  if (addressMatch && addressMatch[1]) {
+    let address = addressMatch[1]
+      .replace(/<br[^>]*>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    // Clean and format address
+    address = address
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line)
+      .join(', ');
+    
+    result.record.address = address;
+  }
+
+  // Alternative address patterns
+  if (!result.record.address) {
+    const addressPatterns = [
+      /from\s*<\/?[^>]*>\s*([^<]+(?:\s*<br[^>]*>\s*[^<]+)*)/i,
+      /Location:\s*([^<\n]+)/i,
+      /Address:\s*([^<\n]+)/i
+    ];
+    
+    for (const pattern of addressPatterns) {
+      const match = html.match(pattern);
+      if (match && match[1]) {
+        let address = match[1]
+          .replace(/<br[^>]*>/gi, '\n')
+          .replace(/<[^>]+>/g, '')
+          .replace(/&nbsp;/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        
+        address = address
+          .split('\n')
+          .map(line => line.trim())
+          .filter(line => line)
+          .join(', ');
+        
+        result.record.address = address;
+        break;
+      }
+    }
+  }
+
+  // ===== EXTRACT CNIC =====
+  // Look for "holder of CNIC No." pattern
+  const cnicRegex = /holder of CNIC No\.?\s*<\/?[^>]*>\s*([^<\n]+)/i;
+  const cnicMatch = html.match(cnicRegex);
+  
+  if (cnicMatch && cnicMatch[1]) {
+    result.record.cnic = cnicMatch[1]
+      .replace(/[^\d-]/g, '') // صرف numbers اور hyphen رکھیں
+      .replace(/\D/g, '') // صرف numbers رکھیں
+      .trim();
+  }
+
+  // Alternative CNIC patterns
+  if (!result.record.cnic) {
+    const cnicPatterns = [
+      /CNIC[^:]*:\s*([^<\n]+)/i,
+      /CNIC No[^:]*:\s*([^<\n]+)/i,
+      /ID No[^:]*:\s*([^<\n]+)/i,
+      /National ID[^:]*:\s*([^<\n]+)/i
+    ];
+    
+    for (const pattern of cnicPatterns) {
+      const match = html.match(pattern);
+      if (match && match[1]) {
+        result.record.cnic = match[1]
+          .replace(/[^\d-]/g, '')
+          .replace(/\D/g, '')
+          .trim();
+        break;
+      }
+    }
+  }
+
+  // Check if we got minimal data
+  if (!result.record.name && !result.record.cnic && !result.record.address) {
+    return {
+      success: false,
+      message: 'No valid Telenor data found'
+    };
   }
 
   return result;
@@ -217,9 +313,15 @@ function formatMobile(mobile) {
 function formatCNIC(cnic) {
   if (!cnic) return '';
   
-  // Remove all non-digits including hyphens
+  // Remove all non-digits
   let cleaned = cnic.replace(/\D/g, '');
   
-  // Return only digits without any formatting
+  // Format as XXXXX-XXXXXXX-X
+  if (cleaned.length === 13) {
+    return cleaned.substring(0, 5) + '-' + 
+           cleaned.substring(5, 12) + '-' + 
+           cleaned.substring(12);
+  }
+  
   return cleaned;
 }
