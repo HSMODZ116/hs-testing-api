@@ -140,6 +140,7 @@ async function fetchData(searchType, searchValue) {
   if (searchType === 'phone') {
     formData.append('number', searchValue);
   } else if (searchType === 'cnic') {
+    // CNIC کے لیے شاید الگ فیلڈ ہو
     formData.append('cnic', searchValue);
   }
   
@@ -163,6 +164,9 @@ async function fetchData(searchType, searchValue) {
   });
 
   const html = await response.text();
+  console.log('HTML Response length:', html.length);
+  console.log('HTML first 500 chars:', html.substring(0, 500));
+  
   return parseHTML(html, searchType);
 }
 
@@ -177,76 +181,108 @@ function parseHTML(html, searchType) {
   if (html.includes('No record found') || 
       html.toLowerCase().includes('not found') ||
       (html.includes('Sorry') && html.includes('found')) ||
-      html.includes('Record Not Found')) {
+      html.includes('Record Not Found') ||
+      html.includes('try again')) {
+    console.log('No records found in HTML');
     return result;
   }
 
-  // Look for table rows
-  const rows = [];
-  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  let rowMatch;
-
-  while ((rowMatch = rowRegex.exec(html))) {
-    rows.push(rowMatch[1]);
-  }
-
-  // Skip header row (first row with th tags)
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
+  // Try to extract data from the table structure in your screenshot
+  // The HTML structure shows table rows with data
+  
+  // Method 1: Look for table rows with specific pattern
+  const tableRows = html.match(/<tr>[\s\S]*?<\/tr>/gi);
+  
+  if (tableRows) {
+    console.log('Found table rows:', tableRows.length);
     
-    // Skip header row
-    if (row.includes('<th>') || 
-        (row.toLowerCase().includes('mobile') && row.toLowerCase().includes('name')) ||
-        (row.includes('Number') && row.includes('Name') && row.includes('CNIC'))) {
-      continue;
-    }
-
-    // Extract cells from row
-    const cells = [];
-    const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
-    let cellMatch;
-
-    while ((cellMatch = cellRegex.exec(row))) {
-      let content = cellMatch[1]
-        .replace(/<[^>]+>/g, '')  // Remove HTML tags
-        .replace(/&nbsp;/g, ' ')  // Replace &nbsp; with space
-        .replace(/<img[^>]*>/g, '') // Remove image tags
-        .replace(/\s+/g, ' ')      // Replace multiple spaces with single space
-        .trim();
+    for (let i = 0; i < tableRows.length; i++) {
+      const row = tableRows[i];
       
-      // Clean emojis and extra spaces
-      content = content.replace(/[^\x00-\x7F]/g, '').trim();
-      cells.push(content);
-    }
-
-    // We need at least 4 columns: Mobile, Name, CNIC, Address
-    if (cells.length >= 4) {
-      const record = {
-        mobile: formatMobile(cells[0] || ''),
-        name: (cells[1] || '').replace(/\.$/, '').trim(), // Remove trailing dot
-        cnic: formatCNIC(cells[2] || ''),
-        address: cells[3] || '',
-        status: 'Active',
-        network: detectNetwork(cells[0] || ''),
-        country: 'Pakistan'
-      };
-
-      // Validate record has at least mobile or name
-      if (record.mobile || record.name) {
-        result.records.push(record);
+      // Skip header rows
+      if (row.includes('<th>') || row.includes('Number') && row.includes('Name') && row.includes('CNIC')) {
+        continue;
+      }
+      
+      // Extract TD cells
+      const cells = row.match(/<td[^>]*>([\s\S]*?)<\/td>/gi);
+      
+      if (cells && cells.length >= 4) {
+        const record = {
+          mobile: '',
+          name: '',
+          cnic: '',
+          address: '',
+          status: 'Active',
+          network: '',
+          country: 'Pakistan'
+        };
+        
+        // Parse each cell
+        for (let j = 0; j < cells.length; j++) {
+          const cellContent = cells[j].replace(/<[^>]+>/g, '')
+                                      .replace(/&nbsp;/g, ' ')
+                                      .trim();
+          
+          switch(j) {
+            case 0: // Number
+              record.mobile = formatMobile(cellContent);
+              record.network = detectNetwork(cellContent);
+              break;
+            case 1: // Name
+              record.name = cellContent.replace(/\.$/, '').trim();
+              break;
+            case 2: // CNIC
+              record.cnic = formatCNIC(cellContent);
+              break;
+            case 3: // Address
+              record.address = cellContent;
+              break;
+          }
+        }
+        
+        // Only add if we have valid data
+        if (record.mobile || record.name) {
+          result.records.push(record);
+        }
       }
     }
   }
-
-  // If searching by CNIC, also extract CNIC from title if available
-  if (searchType === 'cnic' && result.records.length > 0) {
-    const cnicRegex = /<title>(\d{13})<\/title>/i;
-    const cnicMatch = html.match(cnicRegex);
-    if (cnicMatch && cnicMatch[1]) {
-      result.searchValue = cnicMatch[1];
+  
+  // Method 2: Try alternative parsing if first method didn't work
+  if (result.records.length === 0) {
+    // Look for data in the format shown in your screenshot
+    const dataRegex = /<td>(\d+)<\/td>\s*<td>([^<]+)<\/td>\s*<td>(\d+)<\/td>\s*<td>([^<]+)<\/td>/gi;
+    let match;
+    
+    while ((match = dataRegex.exec(html)) !== null) {
+      const record = {
+        mobile: formatMobile(match[1]),
+        name: match[2].replace(/\.$/, '').trim(),
+        cnic: formatCNIC(match[3]),
+        address: match[4].trim(),
+        status: 'Active',
+        network: detectNetwork(match[1]),
+        country: 'Pakistan'
+      };
+      
+      result.records.push(record);
     }
   }
-
+  
+  // Method 3: Look for data in JSON-like format if available
+  if (result.records.length === 0) {
+    // Try to find any data that looks like phone numbers and CNIC
+    const phoneMatches = html.match(/\b03\d{9}\b/g);
+    const cnicMatches = html.match(/\b\d{13}\b/g);
+    
+    if (phoneMatches && cnicMatches) {
+      // Simple extraction - this is a fallback
+      console.log('Using fallback extraction');
+    }
+  }
+  
+  console.log('Parsed records:', result.records.length);
   return result;
 }
 
@@ -262,6 +298,9 @@ function formatMobile(mobile) {
     cleaned = '0' + cleaned.substring(2);
   } else if (cleaned.startsWith('3') && cleaned.length === 10) {
     cleaned = '0' + cleaned;
+  } else if (cleaned.length === 11 && cleaned.startsWith('0')) {
+    // Already in correct format
+    return cleaned;
   }
   
   return cleaned;
