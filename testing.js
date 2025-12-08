@@ -22,7 +22,7 @@ export default {
         return new Response(JSON.stringify({
           success: false,
           error: 'Not found',
-          message: 'Use mobile number in format: 03451234567 or 923451234567'
+          message: 'Use Telenor mobile number starting with 0344, 0345, 0346, 0347'
         }, null, 2), {
           status: 404,
           headers: { 'Content-Type': 'application/json' }
@@ -35,7 +35,7 @@ export default {
         return Response.json({
           success: false,
           error: 'Phone number is required',
-          message: 'Enter mobile number starting with 03 or 92'
+          message: 'Use Telenor mobile number starting with 03'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
@@ -51,19 +51,19 @@ export default {
         phoneNumber = '0' + cleanedNum;
       }
 
-      // ALLOW ALL TYPES OF NUMBERS - NO RESTRICTION HERE
-      if (!/^03\d{9}$/.test(phoneNumber)) {
+      // Validate Telenor number ONLY (0344, 0345, 0346, 0347)
+      if (!/^03[4-7]\d{8}$/.test(phoneNumber)) {
         return Response.json({
           success: false,
-          error: 'Invalid mobile number format',
-          message: 'Please enter valid Pakistani mobile number (03451234567 or 923451234567)'
+          error: 'Invalid Telenor mobile number',
+          message: 'Only Telenor numbers are supported: 0344, 0345, 0346, 0347'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Fetch data for all numbers
+      // Fetch data
       const data = await fetchTelenorData(phoneNumber);
       
       // Return response
@@ -124,7 +124,7 @@ async function fetchTelenorData(phoneNumber) {
   } catch (error) {
     return {
       success: false,
-      message: 'Failed to fetch data'
+      message: 'Failed to fetch Telenor data'
     };
   }
 }
@@ -134,12 +134,10 @@ function extractTelenorData(html, phoneNumber) {
   // Check if no records found
   if (html.includes('No record found') || 
       html.toLowerCase().includes('not found') ||
-      (html.includes('Sorry') && html.includes('found')) ||
-      html.includes('VIP Paid Services') ||
-      html.includes('Click here for New Search')) {
+      (html.includes('Sorry') && html.includes('found'))) {
     return {
       success: false,
-      message: 'No record found for this number'
+      message: 'No Telenor record found for this number'
     };
   }
 
@@ -148,146 +146,91 @@ function extractTelenorData(html, phoneNumber) {
     record: {
       mobile: phoneNumber,
       name: '',
-      cnic: '',
+      cnic: '', // CNIC field added
       address: '',
       network: 'Telenor',
       developer: 'Haseeb Sahil'
     },
-    message: 'Data retrieved successfully'
+    message: 'Telenor data retrieved successfully'
   };
 
-  // ===== DIRECT TABLE PARSING =====
-  // Extract data directly from table structure
+  // ===== CLEAN HTML AND CONVERT TO TEXT =====
+  let cleanText = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const upperText = cleanText.toUpperCase();
+
+  // ===== EXTRACT NAME =====
+  // Look for name in Telenor certificate format
+  const nameRegex = /HAS BEEN\s+([A-Z][A-Z\s]+?)\s+(?:DEDUCTED|COLLECTED|FROM)/i;
+  const nameMatch = upperText.match(nameRegex);
   
-  // 1. Extract Name from table
-  const nameMatch = html.match(/<td[^>]*colspan="[^"]*"[^>]*>([^<]+)<\/td>\s*<\/tr>\s*<tr[^>]*>\s*<td[^>]*>deducted\/collected from<\/td>/i);
   if (nameMatch && nameMatch[1]) {
-    const name = nameMatch[1].trim();
-    if (name && !name.includes('border-bottom') && name !== '.') {
-      result.record.name = cleanTextContent(name);
-    }
-  }
-  
-  // Alternative name extraction
-  if (!result.record.name) {
-    const namePattern = /deducted\/collected from<\/td>\s*<td[^>]*colspan="3"[^>]*>([^<]+)<\/td>/i;
-    const nameAltMatch = html.match(namePattern);
-    if (nameAltMatch && nameAltMatch[1]) {
-      const name = nameAltMatch[1].trim();
-      if (name && name !== '.' && !name.includes('border-bottom')) {
-        result.record.name = cleanTextContent(name);
-      }
-    }
+    result.record.name = cleanTextContent(nameMatch[1]);
   }
 
-  // 2. Extract Address (row after name)
-  if (result.record.name) {
-    // Find the address row which comes after name
-    const addressPattern = new RegExp(`<td[^>]*colspan="3"[^>]*>${escapeRegex(result.record.name)}<\\/td>[\\s\\S]*?<tr[^>]*>[\\s\\S]*?<td[^>]*colspan="[^"]*"[^>]*>([^<]+)<\\/td>`, 'i');
-    const addressMatch = html.match(addressPattern);
-    
-    if (addressMatch && addressMatch[1]) {
-      const address = addressMatch[1].trim();
-      // Check if it's a valid address (not empty, not just dots)
-      if (address && address !== '.' && !address.includes('border-bottom') && address.length > 10) {
-        result.record.address = cleanTextContent(address);
-      }
-    }
-  }
+  // ===== EXTRACT CNIC =====
+  // Look for CNIC number in various formats
+  const cnicPatterns = [
+    /CNIC\s*NO\s*[\.:]*\s*(\d{5}-\d{7}-\d{1})/i,
+    /HOLDER\s+OF\s+CNIC\s*NO\s*[\.:]*\s*(\d{5}-\d{7}-\d{1})/i,
+    /CNIC\s*(\d{5}-\d{7}-\d{1})/i,
+    /(\d{5}-\d{7}-\d{1})/,
+    /(\d{13})/
+  ];
 
-  // Alternative address extraction
-  if (!result.record.address) {
-    // Look for LACHMAN WALA pattern (from your example)
-    const addressPattern2 = /<td[^>]*colspan="3"[^>]*>([A-Z\s]+POST OFFICE[^<]+)<\/td>/i;
-    const addressMatch2 = html.match(addressPattern2);
-    if (addressMatch2 && addressMatch2[1]) {
-      const address = addressMatch2[1].trim();
-      if (address && address.length > 10) {
-        result.record.address = cleanTextContent(address);
-      }
-    }
-  }
-
-  // 3. Extract CNIC
-  const cnicPattern = /holder of CNIC No\.<\/td>\s*<td[^>]*colspan="2"[^>]*>\s*([^<]+)<\/td>/i;
-  const cnicMatch = html.match(cnicPattern);
-  
-  if (cnicMatch && cnicMatch[1]) {
-    const cnic = cnicMatch[1].trim().replace(/[^\d]/g, '');
-    if (cnic.length === 13 && cnic !== '0000000000000') {
-      result.record.cnic = cnic;
-    }
-  }
-
-  // Alternative CNIC extraction
-  if (!result.record.cnic) {
-    const cnicPattern2 = /(\d{5}-\d{7}-\d{1})/;
-    const cnicMatch2 = html.match(cnicPattern2);
-    if (cnicMatch2 && cnicMatch2[1]) {
-      const cnic = cnicMatch2[1].replace(/-/g, '');
-      if (cnic.length === 13) {
+  for (const pattern of cnicPatterns) {
+    const cnicMatch = upperText.match(pattern);
+    if (cnicMatch && cnicMatch[1]) {
+      const cnic = cnicMatch[1].replace(/-/g, '');
+      if (cnic.length === 13 && cnic !== '0000000000000') {
         result.record.cnic = cnic;
+        break;
       }
     }
   }
 
-  // ===== FALLBACK: TEXT EXTRACTION =====
-  if (!result.record.name || !result.record.address) {
-    // Clean HTML to text
-    let cleanText = html
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    
-    const upperText = cleanText.toUpperCase();
-    
-    // Extract name
-    if (!result.record.name) {
-      const nameRegex = /HAS BEEN\s+([A-Z][A-Z\s]+?)\s+DEDUCTED\/COLLECTED FROM/i;
-      const nameMatchText = upperText.match(nameRegex);
-      if (nameMatchText && nameMatchText[1]) {
-        result.record.name = cleanTextContent(nameMatchText[1]);
-      }
-    }
-    
-    // Extract address
-    if (!result.record.address && result.record.name) {
-      const nameIndex = upperText.indexOf(result.record.name);
-      if (nameIndex !== -1) {
-        const afterName = upperText.substring(nameIndex + result.record.name.length);
-        const addressMatchText = afterName.match(/DEDUCTED\/COLLECTED FROM\s+([A-Z\s.,]+?)(?=\s+(?:HAVING|HOLDER|CNIC|ON\s+))/i);
-        if (addressMatchText && addressMatchText[1]) {
-          result.record.address = cleanTextContent(addressMatchText[1]);
+  // ===== EXTRACT ADDRESS =====
+  if (result.record.name) {
+    const nameIndex = upperText.indexOf(result.record.name);
+    if (nameIndex !== -1) {
+      const textAfterName = upperText.substring(nameIndex + result.record.name.length);
+      
+      // Find address ending
+      const endMarkers = ['HAVING NTN', 'HOLDER OF CNIC', 'CNIC', 'ON 00'];
+      let endIndex = -1;
+      
+      for (const marker of endMarkers) {
+        const index = textAfterName.indexOf(marker);
+        if (index !== -1 && (endIndex === -1 || index < endIndex)) {
+          endIndex = index;
         }
       }
-    }
-    
-    // Extract CNIC
-    if (!result.record.cnic) {
-      const cnicMatchText = upperText.match(/(\d{5}-\d{7}-\d{1})/);
-      if (cnicMatchText && cnicMatchText[1]) {
-        result.record.cnic = cnicMatchText[1].replace(/-/g, '');
+      
+      if (endIndex === -1) {
+        endIndex = Math.min(200, textAfterName.length);
+      }
+      
+      if (endIndex > 0) {
+        const rawAddress = textAfterName.substring(0, endIndex);
+        // Remove DEDUCTED/COLLECTED/FROM from beginning of address
+        const cleanedAddress = rawAddress.replace(/^(?:\s*(?:DEDUCTED|COLLECTED|FROM))+\s*/i, '');
+        result.record.address = cleanTextContent(cleanedAddress);
       }
     }
-  }
-
-  // ===== FINAL CLEANUP =====
-  // Remove "DEDUCTED COLLECTED FROM" from address if present
-  if (result.record.address) {
-    result.record.address = result.record.address
-      .replace(/^(?:DEDUCTED|COLLECTED|FROM)\s*/gi, '')
-      .replace(/\s+/g, ' ')
-      .trim();
   }
 
   // ===== FINAL VALIDATION =====
   if (!result.record.name && !result.record.address && !result.record.cnic) {
     return {
       success: false,
-      message: 'No valid data found'
+      message: 'No valid Telenor data found'
     };
   }
 
@@ -297,14 +240,8 @@ function extractTelenorData(html, phoneNumber) {
 // ========== HELPER FUNCTIONS ==========
 function cleanTextContent(text) {
   return text
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/[^\w\s.,\-]/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .replace(/\.{2,}/g, ' ')
+    .replace(/[^A-Z\s.,\-]/gi, ' ')  // Keep letters, spaces, dots, commas and hyphens
+    .replace(/\s+/g, ' ')         // Remove extra spaces
+    .replace(/\.{2,}/g, ' ')      // Remove multiple dots
     .trim();
-}
-
-function escapeRegex(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
