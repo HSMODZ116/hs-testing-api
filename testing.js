@@ -52,7 +52,6 @@ export default {
       }
 
       // ALLOW ALL TYPES OF NUMBERS - NO RESTRICTION HERE
-      // Just validate it's a proper Pakistani mobile number format
       if (!/^03\d{9}$/.test(phoneNumber)) {
         return Response.json({
           success: false,
@@ -64,23 +63,7 @@ export default {
         });
       }
 
-      // Check if it's Telenor number (0344-0347)
-      // If not Telenor, return appropriate message
-      if (!/^03[4-7]\d{8}$/.test(phoneNumber)) {
-        return Response.json({
-          success: true,
-          phone: phoneNumber,
-          data: null,
-          message: 'This is not a Telenor number. Only Telenor numbers (0344, 0345, 0346, 0347) are supported for data lookup.'
-        }, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-          }
-        });
-      }
-
-      // Fetch data only for Telenor numbers
+      // Fetch data for all numbers
       const data = await fetchTelenorData(phoneNumber);
       
       // Return response
@@ -141,7 +124,7 @@ async function fetchTelenorData(phoneNumber) {
   } catch (error) {
     return {
       success: false,
-      message: 'Failed to fetch Telenor data'
+      message: 'Failed to fetch data'
     };
   }
 }
@@ -151,10 +134,11 @@ function extractTelenorData(html, phoneNumber) {
   // Check if no records found
   if (html.includes('No record found') || 
       html.toLowerCase().includes('not found') ||
-      (html.includes('Sorry') && html.includes('found'))) {
+      (html.includes('Sorry') && html.includes('found')) ||
+      html.includes('Click here for New Search')) {
     return {
       success: false,
-      message: 'No record found for this Telenor number'
+      message: 'No record found for this number'
     };
   }
 
@@ -165,46 +149,45 @@ function extractTelenorData(html, phoneNumber) {
       name: '',
       cnic: '',
       address: '',
-      network: 'Telenor',
+      network: detectNetwork(phoneNumber),
       developer: 'Haseeb Sahil'
     },
-    message: 'Telenor data retrieved successfully'
+    message: 'Data retrieved successfully'
   };
 
-  // ===== CLEAN HTML AND CONVERT TO TEXT =====
-  let cleanText = html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const upperText = cleanText.toUpperCase();
-
   // ===== EXTRACT NAME =====
-  const nameRegex = /HAS BEEN\s+([A-Z][A-Z\s]+?)(?:\s+(?:DEDUCTED|COLLECTED|FROM|HAVING|HOLDER|CNIC|ON))?/i;
-  const nameMatch = upperText.match(nameRegex);
-  
-  if (nameMatch && nameMatch[1]) {
-    result.record.name = cleanTextContent(nameMatch[1]);
+  // Look for name in table structure
+  const namePatterns = [
+    /deducted\/collected from<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
+    /<td[^>]*>deducted\/collected from<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
+    /deducted\/collected from.*?<td[^>]*>([^<]+)<\/td>/i
+  ];
+
+  for (const pattern of namePatterns) {
+    const match = html.match(pattern);
+    if (match && match[1]) {
+      const name = match[1].trim();
+      if (name && name.length > 1 && !name.includes('border-bottom') && name !== '.' && !/^[.\s]+$/.test(name)) {
+        result.record.name = cleanTextContent(name);
+        break;
+      }
+    }
   }
 
   // ===== EXTRACT CNIC =====
-  // Look for CNIC in various formats
-  const cnicRegexes = [
-    /CNIC\s*[:-\s]*(\d{5}[-]?\d{7}[-]?\d{1})/i,
-    /(\d{5}[-]?\d{7}[-]?\d{1})/,
-    /NIC\s*[:-\s]*(\d{13})/i,
-    /IDENTITY\s*[:-\s]*(\d{5}[-]?\d{7}[-]?\d{1})/i
+  // Look for CNIC in holder of CNIC row
+  const cnicPatterns = [
+    /holder of CNIC No\.<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
+    /CNIC No\.<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
+    /holder of CNIC.*?<td[^>]*>([^<]+)<\/td>/i,
+    /(\d{5}[-]?\d{7}[-]?\d{1})/
   ];
 
-  for (const regex of cnicRegexes) {
-    const cnicMatch = upperText.match(regex);
-    if (cnicMatch && cnicMatch[1]) {
-      let cnic = cnicMatch[1].replace(/-/g, '');
-      if (cnic.length === 13) {
+  for (const pattern of cnicPatterns) {
+    const match = html.match(pattern);
+    if (match && match[1]) {
+      let cnic = match[1].trim().replace(/[^\d]/g, '');
+      if (cnic.length === 13 && cnic !== '0000000000000') {
         result.record.cnic = cnic;
         break;
       }
@@ -212,41 +195,69 @@ function extractTelenorData(html, phoneNumber) {
   }
 
   // ===== EXTRACT ADDRESS =====
+  // First try: Look for address after name in table
   if (result.record.name) {
-    const nameIndex = upperText.indexOf(result.record.name);
-    if (nameIndex !== -1) {
-      const textAfterName = upperText.substring(nameIndex + result.record.name.length);
+    // Find the row after name
+    const nameRegex = new RegExp(`deducted\\/collected from[^<]*<td[^>]*>${escapeRegex(result.record.name)}<\\/td>`, 'i');
+    const nameMatch = html.match(nameRegex);
+    
+    if (nameMatch) {
+      const afterName = html.substring(nameMatch.index + nameMatch[0].length);
       
-      // Remove DEDUCTED, COLLECTED, FROM from beginning
-      let addressText = textAfterName.replace(/^(?:\s*(?:DEDUCTED|COLLECTED|FROM))+\s*/i, '');
+      // Look for the next table row with content
+      const rowRegex = /<tr[^>]*>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/gi;
+      const rows = afterName.match(rowRegex);
       
-      // Find address ending markers
-      const endMarkers = ['HAVING NTN', 'HOLDER OF CNIC', 'CNIC', 'ON 00', 'NIC', 'IDENTITY'];
-      let endIndex = -1;
-      
-      for (const marker of endMarkers) {
-        const index = addressText.indexOf(marker);
-        if (index !== -1 && (endIndex === -1 || index < endIndex)) {
-          endIndex = index;
+      if (rows && rows.length > 0) {
+        for (const row of rows) {
+          const cellMatch = row.match(/<td[^>]*>([^<]+)<\/td>/);
+          if (cellMatch && cellMatch[1]) {
+            const text = cellMatch[1].trim();
+            // Check if this looks like an address (not empty, not just dots, not CNIC)
+            if (text && text !== '.' && !/^\d{13}$/.test(text.replace(/\D/g, '')) && 
+                text.length > 10 && !text.includes('border-bottom')) {
+              result.record.address = cleanTextContent(text);
+              break;
+            }
+          }
         }
       }
-      
-      if (endIndex === -1) {
-        endIndex = Math.min(200, addressText.length);
-      }
-      
-      if (endIndex > 0) {
-        const rawAddress = addressText.substring(0, endIndex);
-        result.record.address = cleanTextContent(rawAddress);
+    }
+  }
+
+  // Second try: Direct extraction from specific pattern
+  if (!result.record.address) {
+    const addressPatterns = [
+      /<td[^>]*>LACHMAN[^<]+<\/td>/i,
+      /<td[^>]*>([A-Z][A-Z\s]+(?:POST OFFICE|TEHSIL|ZILAH|DISTRICT)[^<]+)<\/td>/i,
+      /<td[^>]*>([A-Z][A-Z\s]{20,})<\/td>/
+    ];
+
+    for (const pattern of addressPatterns) {
+      const match = html.match(pattern);
+      if (match && match[1]) {
+        const address = match[1].trim();
+        if (address && address.length > 15) {
+          result.record.address = cleanTextContent(address);
+          break;
+        }
       }
     }
+  }
+
+  // Clean address from unwanted prefixes
+  if (result.record.address) {
+    result.record.address = result.record.address
+      .replace(/^(?:DEDUCTED|COLLECTED|FROM)\s*/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   // ===== FINAL VALIDATION =====
   if (!result.record.name && !result.record.address && !result.record.cnic) {
     return {
       success: false,
-      message: 'No valid Telenor data found'
+      message: 'No valid data found'
     };
   }
 
@@ -254,10 +265,74 @@ function extractTelenorData(html, phoneNumber) {
 }
 
 // ========== HELPER FUNCTIONS ==========
+function detectNetwork(phoneNumber) {
+  const prefix = phoneNumber.substring(0, 4);
+  const networks = {
+    '0300': 'Mobilink',
+    '0301': 'Mobilink',
+    '0302': 'Mobilink',
+    '0303': 'Ufone',
+    '0304': 'Telenor',
+    '0305': 'Telenor',
+    '0306': 'Telenor',
+    '0307': 'Telenor',
+    '0308': 'Zong',
+    '0309': 'Zong',
+    '0310': 'Zong',
+    '0311': 'Zong',
+    '0312': 'Telenor',
+    '0313': 'Ufone',
+    '0314': 'Zong',
+    '0315': 'Zong',
+    '0316': 'Warid',
+    '0317': 'Warid',
+    '0318': 'Warid',
+    '0319': 'SCOM',
+    '0320': 'Jazz',
+    '0321': 'Zong',
+    '0322': 'Warid',
+    '0323': 'Ufone',
+    '0324': 'Mobilink',
+    '0325': 'Mobilink',
+    '0326': 'Mobilink',
+    '0327': 'Mobilink',
+    '0328': 'Mobilink',
+    '0329': 'Mobilink',
+    '0330': 'Mobilink',
+    '0331': 'Zong',
+    '0332': 'Warid',
+    '0333': 'Ufone',
+    '0334': 'Mobilink',
+    '0335': 'Mobilink',
+    '0336': 'Mobilink',
+    '0337': 'Jazz',
+    '0338': 'Warid',
+    '0339': 'Warid',
+    '0340': 'Telenor',
+    '0341': 'Telenor',
+    '0342': 'Telenor',
+    '0343': 'Zong',
+    '0344': 'Telenor',
+    '0345': 'Telenor',
+    '0346': 'Telenor',
+    '0347': 'Telenor',
+    '0348': 'Warid',
+    '0349': 'Zong'
+  };
+  
+  return networks[prefix] || 'Unknown';
+}
+
 function cleanTextContent(text) {
   return text
-    .replace(/[^A-Z\s.,\-]/gi, ' ')  // Keep letters, spaces, dots, commas and hyphens
-    .replace(/\s+/g, ' ')         // Remove extra spaces
-    .replace(/\.{2,}/g, ' ')      // Remove multiple dots
+    .replace(/<[^>]*>/g, ' ')  // Remove HTML tags
+    .replace(/&nbsp;/g, ' ')   // Remove &nbsp;
+    .replace(/[^\w\s.,\-]/gi, ' ')  // Keep only letters, numbers, spaces, dots, commas and hyphens
+    .replace(/\s+/g, ' ')      // Remove extra spaces
+    .replace(/\.{2,}/g, ' ')   // Remove multiple dots
     .trim();
+}
+
+function escapeRegex(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
