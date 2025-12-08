@@ -149,7 +149,7 @@ function extractTelenorData(html, phoneNumber) {
       name: '',
       cnic: '',
       address: '',
-      network: detectNetwork(phoneNumber),
+      network: 'Telenor', // Default Telenor always
       developer: 'Haseeb Sahil'
     },
     message: 'Data retrieved successfully'
@@ -265,64 +265,6 @@ function extractTelenorData(html, phoneNumber) {
 }
 
 // ========== HELPER FUNCTIONS ==========
-function detectNetwork(phoneNumber) {
-  const prefix = phoneNumber.substring(0, 4);
-  const networks = {
-    '0300': 'Mobilink',
-    '0301': 'Mobilink',
-    '0302': 'Mobilink',
-    '0303': 'Ufone',
-    '0304': 'Telenor',
-    '0305': 'Telenor',
-    '0306': 'Telenor',
-    '0307': 'Telenor',
-    '0308': 'Zong',
-    '0309': 'Zong',
-    '0310': 'Zong',
-    '0311': 'Zong',
-    '0312': 'Telenor',
-    '0313': 'Ufone',
-    '0314': 'Zong',
-    '0315': 'Zong',
-    '0316': 'Warid',
-    '0317': 'Warid',
-    '0318': 'Warid',
-    '0319': 'SCOM',
-    '0320': 'Jazz',
-    '0321': 'Zong',
-    '0322': 'Warid',
-    '0323': 'Ufone',
-    '0324': 'Mobilink',
-    '0325': 'Mobilink',
-    '0326': 'Mobilink',
-    '0327': 'Mobilink',
-    '0328': 'Mobilink',
-    '0329': 'Mobilink',
-    '0330': 'Mobilink',
-    '0331': 'Zong',
-    '0332': 'Warid',
-    '0333': 'Ufone',
-    '0334': 'Mobilink',
-    '0335': 'Mobilink',
-    '0336': 'Mobilink',
-    '0337': 'Jazz',
-    '0338': 'Warid',
-    '0339': 'Warid',
-    '0340': 'Telenor',
-    '0341': 'Telenor',
-    '0342': 'Telenor',
-    '0343': 'Zong',
-    '0344': 'Telenor',
-    '0345': 'Telenor',
-    '0346': 'Telenor',
-    '0347': 'Telenor',
-    '0348': 'Warid',
-    '0349': 'Zong'
-  };
-  
-  return networks[prefix] || 'Unknown';
-}
-
 function cleanTextContent(text) {
   return text
     .replace(/<[^>]*>/g, ' ')  // Remove HTML tags
