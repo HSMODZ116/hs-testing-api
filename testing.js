@@ -51,19 +51,19 @@ export default {
         phoneNumber = '0' + cleanedNum;
       }
 
-      // Validate it's a Telenor number (0344, 0345, 0346, 0347)
+      // Validate Telenor number ONLY (0344, 0345, 0346, 0347)
       if (!/^03[4-7]\d{8}$/.test(phoneNumber)) {
         return Response.json({
           success: false,
           error: 'Invalid Telenor mobile number',
-          message: 'Telenor numbers start with: 0344, 0345, 0346, 0347'
+          message: 'Only Telenor numbers are supported: 0344, 0345, 0346, 0347'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Fetch Telenor data from paksimownerdetails.com
+      // Fetch data
       const data = await fetchTelenorData(phoneNumber);
       
       // Return response
@@ -119,25 +119,25 @@ async function fetchTelenorData(phoneNumber) {
     });
 
     const html = await response.text();
-    return extractCertificateData(html, phoneNumber);
+    return extractTelenorData(html, phoneNumber);
     
   } catch (error) {
     return {
       success: false,
-      message: 'Failed to fetch data'
+      message: 'Failed to fetch Telenor data'
     };
   }
 }
 
-// ========== EXTRACT CERTIFICATE DATA ==========
-function extractCertificateData(html, phoneNumber) {
+// ========== EXTRACT TELENOR DATA ==========
+function extractTelenorData(html, phoneNumber) {
   // Check if no records found
   if (html.includes('No record found') || 
       html.toLowerCase().includes('not found') ||
       (html.includes('Sorry') && html.includes('found'))) {
     return {
       success: false,
-      message: 'No record found for this Telenor number'
+      message: 'No Telenor record found for this number'
     };
   }
 
@@ -147,38 +147,14 @@ function extractCertificateData(html, phoneNumber) {
       mobile: phoneNumber,
       name: '',
       address: '',
-      cnic: ''
+      network: 'Telenor',
+      developer: 'Haseeb Sahil' // Developer field added
     },
     message: 'Telenor data retrieved successfully'
   };
 
-  // ===== STEP 1: EXTRACT THE CERTIFICATE SECTION =====
-  // Find the certificate div or section
-  let certificateText = '';
-  
-  // Try to find the certificate by looking for specific patterns
-  const certificatePatterns = [
-    /Certified that the sum of Rupees[\s\S]*?(\d{13}|<\/div>|$)/i,
-    /MSISDN\s*\d+[\s\S]*?Certified that[\s\S]*?(\d{13}|$)/i,
-    /Serial No[\s\S]*?(\d{13}|$)/i
-  ];
-  
-  for (const pattern of certificatePatterns) {
-    const match = html.match(pattern);
-    if (match && match[0]) {
-      certificateText = match[0];
-      break;
-    }
-  }
-  
-  // If no specific section found, use the whole HTML but clean it
-  if (!certificateText) {
-    certificateText = html;
-  }
-
-  // ===== STEP 2: CLEAN THE TEXT =====
-  // Remove all HTML tags but preserve line structure
-  let cleanText = certificateText
+  // ===== CLEAN HTML AND CONVERT TO TEXT =====
+  let cleanText = html
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/div>/gi, '\n')
     .replace(/<\/p>/gi, '\n')
@@ -187,122 +163,60 @@ function extractCertificateData(html, phoneNumber) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Convert to uppercase for easier matching
   const upperText = cleanText.toUpperCase();
 
-  // ===== STEP 3: EXTRACT NAME =====
-  // Look for name after "HAS BEEN"
+  // ===== EXTRACT NAME =====
+  // Look for name in Telenor certificate format
   const nameRegex = /HAS BEEN\s+([A-Z][A-Z\s]+?)\s+(?:DEDUCTED|COLLECTED|FROM)/i;
   const nameMatch = upperText.match(nameRegex);
   
   if (nameMatch && nameMatch[1]) {
-    result.record.name = nameMatch[1].trim();
+    result.record.name = cleanTextContent(nameMatch[1]);
   }
 
-  // Alternative: Look for name between "HAS BEEN" and "DEDUCTED/COLLECTED FROM"
-  if (!result.record.name) {
-    const altNameRegex = /HAS BEEN\s+([A-Z\s]+?)\s+DEDUCTED\/COLLECTED FROM/i;
-    const altNameMatch = upperText.match(altNameRegex);
-    if (altNameMatch && altNameMatch[1]) {
-      result.record.name = altNameMatch[1].trim();
-    }
-  }
-
-  // ===== STEP 4: EXTRACT ADDRESS =====
-  // Look for address after "DEDUCTED/COLLECTED FROM"
+  // ===== EXTRACT ADDRESS =====
   if (result.record.name) {
-    // First find the position of name
     const nameIndex = upperText.indexOf(result.record.name);
     if (nameIndex !== -1) {
-      // Get text after name
       const textAfterName = upperText.substring(nameIndex + result.record.name.length);
       
-      // Look for address ending before "HAVING NTN" or CNIC
-      const addressEndRegex = /(HAVING NTN|HOLDER OF CNIC|CNIC NO|33104|38103)/i;
-      const addressEndMatch = textAfterName.match(addressEndRegex);
+      // Find address ending
+      const endMarkers = ['HAVING NTN', 'HOLDER OF CNIC', 'CNIC', 'ON 00'];
+      let endIndex = -1;
       
-      if (addressEndMatch) {
-        const addressEndIndex = textAfterName.indexOf(addressEndMatch[0]);
-        if (addressEndIndex > 0) {
-          result.record.address = textAfterName.substring(0, addressEndIndex)
-            .replace(/[^\w\s.,]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
+      for (const marker of endMarkers) {
+        const index = textAfterName.indexOf(marker);
+        if (index !== -1 && (endIndex === -1 || index < endIndex)) {
+          endIndex = index;
         }
-      } else {
-        // If no end marker, take reasonable length
-        result.record.address = textAfterName.substring(0, 200)
-          .replace(/[^\w\s.,]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
+      }
+      
+      if (endIndex === -1) {
+        endIndex = Math.min(200, textAfterName.length);
+      }
+      
+      if (endIndex > 0) {
+        result.record.address = cleanTextContent(textAfterName.substring(0, endIndex));
       }
     }
   }
 
-  // ===== STEP 5: EXTRACT CNIC =====
-  // Look for 13-digit CNIC
-  const cnicRegex = /(\d{5}[-]?\d{7}[-]?\d{1})/;
-  const cnicMatch = cleanText.match(cnicRegex);
-  
-  if (cnicMatch) {
-    result.record.cnic = cnicMatch[1].replace(/\D/g, '');
-  }
-
-  // Alternative: Look for CNIC after "HOLDER OF CNIC NO."
-  if (!result.record.cnic || result.record.cnic === '0000000000000') {
-    const cnicPattern = /CNIC NO\.\s*(\d{13})/i;
-    const cnicPatternMatch = cleanText.match(cnicPattern);
-    if (cnicPatternMatch && cnicPatternMatch[1]) {
-      result.record.cnic = cnicPatternMatch[1];
-    }
-  }
-
-  // ===== STEP 6: SPECIFIC CASES FROM SCREENSHOTS =====
-  // Handle specific numbers from your screenshots
-  if (phoneNumber === '03474965595') {
-    result.record.name = 'MUHAMMAD KASHIF';
-    result.record.address = 'LACHMAN WALA POST OFFICE ZAMEWALA GHULAMAN NUMBER 1 TEHSIL KALOR KOT ZILAH BHAKKAR';
-    result.record.cnic = '3810360039127';
-  } else if (phoneNumber === '03486563850') {
-    result.record.name = 'NASREEN B B';
-    result.record.address = 'NANKANA ROAD MOHALA AZAM TOWN JARANWALA DISTRICT F';
-    result.record.cnic = '3310421645226';
-  }
-
-  // ===== STEP 7: CLEAN AND VALIDATE =====
-  // Clean name
-  if (result.record.name) {
-    result.record.name = result.record.name
-      .replace(/[^A-Z\s]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  // Clean address
-  if (result.record.address) {
-    result.record.address = result.record.address
-      .replace(/DOCTYPE|HTML|DETAILS|LOADING|SECURE|PLEASE|WAIT|SECONDS|RESULT|VIP|PAID|SERVICES|FRESH|SIM|NADRA|PICTURE|ALL|ACTIVE|NUMBERS|ON|CNIC|CDR|COMPLETE|CALL|HISTORY|PINPOINT|LIVE|LOCATION|NETWORKS|FAMILY|TREE|COLOR|COPY|PASSPORT|VACCINES|WITH|ONLINE|RECORDS|CLICK|TO|CHAT|WITH|RIDHA|HERE|FOR|NEW|SEARCH|DOWNLOAD|AS|PNG|AM|PM|SERIAL|NO|ORIGINAL|DUPLICATE|MSISDN|CERTIFIED|THAT|THE|SUM|OF|RUPEES|ON|ACCOUNT|OF|INCOME|TAX|HAS|BEEN|DEDUCTED|COLLECTED|FROM|HAVING|NTN|NUMBER|HOLDER|OF/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .replace(/\.{2,}/g, ' ')
-      .trim();
-    
-    // Remove date and time patterns
-    result.record.address = result.record.address.replace(/\d{2}-\d{2}-\d{4}\s+\d{2}:\d{2}:\d{2}\s+[AP]M/i, '');
-    result.record.address = result.record.address.replace(/\d{11}/g, '');
-  }
-
-  // Validate CNIC
-  if (result.record.cnic && result.record.cnic.length !== 13) {
-    result.record.cnic = '';
-  }
-
-  // ===== STEP 8: FINAL CHECK =====
-  if (!result.record.name && !result.record.cnic) {
+  // ===== FINAL VALIDATION =====
+  if (!result.record.name && !result.record.address) {
     return {
       success: false,
-      message: 'No valid Telenor certificate data found'
+      message: 'No valid Telenor data found'
     };
   }
 
   return result;
+}
+
+// ========== HELPER FUNCTIONS ==========
+function cleanTextContent(text) {
+  return text
+    .replace(/[^A-Z\s.,]/g, ' ')  // Keep only letters, spaces, dots and commas
+    .replace(/\s+/g, ' ')         // Remove extra spaces
+    .replace(/\.{2,}/g, ' ')      // Remove multiple dots
+    .trim();
 }
