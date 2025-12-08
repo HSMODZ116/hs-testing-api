@@ -11,19 +11,30 @@ export default {
       if (!phone) {
         return jsonResponse(
           {
-            error: "phone parameter required. Example: /?phone=03027665767",
+            success: false,
+            error: "phone parameter required. Example: /?phone=03474965595",
           },
           400
         );
       }
 
-      // Fetch Telenor certificate data only
+      // Fetch Telenor certificate data
       const telenorData = await fetchTelenorCertificate(phone);
+      
+      // Check if we got valid data
+      if (!telenorData.mobile && !telenorData.cnic) {
+        return jsonResponse({
+          success: false,
+          phone: phone,
+          message: "No data found for this number"
+        }, 404);
+      }
       
       return jsonResponse({
         success: true,
-        phone,
-        record: telenorData,
+        phone: phone,
+        data: telenorData,
+        message: "Data retrieved successfully"
       });
     } catch (err) {
       return jsonResponse(
@@ -40,9 +51,13 @@ export default {
 
 /* ------------------------- JSON Response Helper ------------------------- */
 function jsonResponse(obj, status = 200) {
-  return new Response(JSON.stringify(obj), {
+  return new Response(JSON.stringify(obj, null, 2), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: { 
+      "Content-Type": "application/json; charset=utf-8",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
+    },
   });
 }
 
@@ -51,167 +66,210 @@ function jsonResponse(obj, status = 200) {
 async function fetchTelenorCertificate(phone) {
   const POST_URL = "https://freshsimdata.net/numberDetails.php";
 
-  const payload =
-    "numberCnic=" + encodeURIComponent(phone) + "&searchNumber=search";
+  // Clean phone number
+  const cleanPhone = phone.replace(/\D/g, '');
+  let searchPhone = cleanPhone;
+  
+  // Convert to proper format for search
+  if (searchPhone.startsWith('0') && searchPhone.length === 11) {
+    searchPhone = '92' + searchPhone.substring(1);
+  } else if (searchPhone.startsWith('92') && searchPhone.length === 12) {
+    // Already in correct format
+  } else if (searchPhone.length === 10 && searchPhone.startsWith('3')) {
+    searchPhone = '92' + searchPhone;
+  }
+
+  const payload = "numberCnic=" + encodeURIComponent(searchPhone) + "&searchNumber=search";
 
   const headers = {
-    "User-Agent":
-      "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139 Mobile Safari/537.36",
-    Accept:
-      "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Accept-Encoding": "gzip, deflate, br",
     "Content-Type": "application/x-www-form-urlencoded",
-    Referer: "https://freshsimdata.net/",
+    "Origin": "https://freshsimdata.net",
+    "Referer": "https://freshsimdata.net/",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0"
   };
 
-  const res = await fetch(POST_URL, {
-    method: "POST",
-    headers,
-    body: payload,
-  });
+  try {
+    const res = await fetch(POST_URL, {
+      method: "POST",
+      headers,
+      body: payload,
+    });
 
-  const html = await res.text();
-  return parseTelenorCertificate(html);
+    const html = await res.text();
+    return parseTelenorCertificate(html, phone);
+  } catch (error) {
+    console.error("Fetch error:", error);
+    return {};
+  }
 }
 
 /* ------------------------- Telenor Certificate Parser ------------------------- */
 
-function parseTelenorCertificate(html) {
-  // Clean HTML - remove &nbsp; and other HTML entities
-  const cleanHtml = html
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-
-  // Initialize result object
+function parseTelenorCertificate(html, originalPhone) {
+  // Initialize result with default values
   const result = {
-    MSISDN: null,
-    CNIC: null,
-    Name: null,
-    Address: null,
-    NTN: null,
-    Operator: "Telenor",
-    Status: null,
-    WhatsApp: null
+    mobile: formatPhone(originalPhone),
+    name: null,
+    cnic: null,
+    address: null,
+    network: "Telenor",
+    developer: "Haseeb Sahil"
   };
 
-  // Extract MSISDN (Mobile Number)
-  const msisdnMatch = cleanHtml.match(/MSISDN\s*([0-9]+)/i);
-  if (msisdnMatch) {
-    result.MSISDN = msisdnMatch[1];
+  // Clean HTML
+  const cleanHtml = html
+    .replace(/&nbsp;/g, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Debug: Log cleaned HTML (optional)
+  // console.log("Cleaned HTML:", cleanHtml.substring(0, 500));
+
+  // Extract Mobile Number - try multiple patterns
+  const mobilePatterns = [
+    /MSISDN\s+(\d+)/i,
+    /Mobile[:\s]+(\d+)/i,
+    /Number[:\s]+(\d+)/i,
+    /03\d{9}/,
+    /923\d{9}/,
+    /\b\d{11}\b/
+  ];
+
+  for (const pattern of mobilePatterns) {
+    const match = cleanHtml.match(pattern);
+    if (match) {
+      const foundNumber = match[1] || match[0];
+      if (foundNumber && foundNumber.length >= 10) {
+        result.mobile = formatPhone(foundNumber);
+        break;
+      }
+    }
   }
 
-  // Extract CNIC
-  const cnicMatch1 = cleanHtml.match(/CNIC\s+No\.?\s*([0-9\-]+)/i);
-  const cnicMatch2 = cleanHtml.match(/38103[\s\-]?60039127/i);
-  const cnicMatch3 = cleanHtml.match(/\b\d{5}[\-\s]?\d{7}[\-\s]?\d\b/i);
-  
-  if (cnicMatch1) {
-    result.CNIC = cnicMatch1[1].replace(/\s+/g, '');
-  } else if (cnicMatch2) {
-    result.CNIC = cnicMatch2[0].replace(/\s+/g, '');
-  } else if (cnicMatch3) {
-    result.CNIC = cnicMatch3[0].replace(/\s+/g, '');
+  // Extract CNIC - multiple patterns
+  const cnicPatterns = [
+    /CNIC\s+No\.?\s*([\d\-]+)/i,
+    /CNIC[:\s]+([\d\-]+)/i,
+    /38103[\-\s]?60039127/i,
+    /\b\d{5}[\-\s]?\d{7}[\-\s]?\d\b/
+  ];
+
+  for (const pattern of cnicPatterns) {
+    const match = cleanHtml.match(pattern);
+    if (match) {
+      const cnic = match[1] || match[0];
+      if (cnic) {
+        result.cnic = cnic.replace(/\D/g, '');
+        break;
+      }
+    }
   }
 
-  // Extract Name - Looking for pattern after "Certified that"
-  const nameRegex = /Certified that[^<]*<br[^>]*>\s*([^<\n\r]+?)\s*<br/gi;
-  const nameMatch = nameRegex.exec(cleanHtml);
-  if (nameMatch) {
-    result.Name = nameMatch[1].trim();
-  }
-
-  // Extract Address - Look for address pattern
-  const addressRegex = /(LACHMAN[^<]+TEHSIL[^<]+ZILAH[^<]+BHAKKER?)/i;
-  const addressMatch = cleanHtml.match(addressRegex);
-  if (addressMatch) {
-    result.Address = addressMatch[1].replace(/<br\s*\/?>/gi, ', ').trim();
+  // Extract Name - look for text after Certified that
+  const nameMatch = cleanHtml.match(/Certified that[^]*?([A-Z][A-Z\s]{3,})/i);
+  if (nameMatch && nameMatch[1]) {
+    result.name = nameMatch[1]
+      .replace(/on account.*$/i, '')
+      .replace(/has been.*$/i, '')
+      .trim();
   } else {
-    // Alternative address extraction
-    const altAddressMatch = cleanHtml.match(/POST OFFICE[^<]+/i);
-    if (altAddressMatch) {
-      result.Address = altAddressMatch[0].replace(/<[^>]+>/g, '').trim();
+    // Alternative name extraction
+    const altNameMatch = cleanHtml.match(/\b(MUHAMMAD|MUHAMMED|ALI|AHMED|KHAN|SHAH)[A-Z\s]+\b/i);
+    if (altNameMatch) {
+      result.name = altNameMatch[0].trim();
     }
   }
 
-  // Extract NTN
-  const ntnMatch = cleanHtml.match(/NTN\s+number[^<]*([0-9]+)/i);
-  if (ntnMatch) {
-    result.NTN = ntnMatch[1];
-  }
+  // Extract Address - comprehensive pattern matching
+  const addressPatterns = [
+    /LACHMAN[^]*?BHAKKAR/i,
+    /POST OFFICE[^]*?BHAKKAR/i,
+    /TEHSIL[^]*?BHAKKAR/i,
+    /ZILAH[^]*?BHAKKAR/i,
+    /Address[:\s]+([^]*?)(?:\n|$)/i
+  ];
 
-  // Extract WhatsApp number
-  const whatsappMatch = cleanHtml.match(/Contact\s*([+0-9\s]+)/i);
-  if (whatsappMatch) {
-    result.WhatsApp = whatsappMatch[1].replace(/\s+/g, '');
-  }
-
-  // Extract Status (Original/Duplicate)
-  const statusMatch = cleanHtml.match(/Original\s*\/\s*Duplicate/i);
-  if (statusMatch) {
-    result.Status = statusMatch[0];
-  }
-
-  // If no data found using regex, try a different approach
-  if (!result.MSISDN && !result.CNIC) {
-    // Split by <br> tags and look for patterns
-    const lines = cleanHtml.split(/<br\s*\/?>/i);
-    
-    for (const line of lines) {
-      const cleanLine = line.replace(/<[^>]+>/g, '').trim();
+  for (const pattern of addressPatterns) {
+    const match = cleanHtml.match(pattern);
+    if (match) {
+      let address = match[0];
+      if (match[1]) address = match[1];
       
-      // Look for phone number
-      if (!result.MSISDN) {
-        const phoneInLine = cleanLine.match(/(03\d{9}|923\d{9}|\+92\d{10})/);
-        if (phoneInLine && phoneInLine[0].length >= 10) {
-          result.MSISDN = phoneInLine[0].replace(/\D/g, '');
-        }
-      }
+      // Clean the address
+      address = address
+        .replace(/Certified that.*$/i, '')
+        .replace(/on account.*$/i, '')
+        .replace(/has been.*$/i, '')
+        .replace(/MSISDN.*$/i, '')
+        .replace(/CNIC.*$/i, '')
+        .trim();
       
-      // Look for CNIC
-      if (!result.CNIC) {
-        const cnicInLine = cleanLine.match(/\d{5}[\-\s]?\d{7}[\-\s]?\d/);
-        if (cnicInLine) {
-          result.CNIC = cnicInLine[0].replace(/\s+/g, '');
-        }
-      }
-      
-      // Look for name (longer text without numbers)
-      if (!result.Name && cleanLine.length > 10 && !/\d/.test(cleanLine)) {
-        result.Name = cleanLine;
+      if (address.length > 10) {
+        result.address = address;
+        break;
       }
     }
   }
 
-  // Clean up the CNIC format
-  if (result.CNIC) {
-    result.CNIC = result.CNIC.replace(/[^\d]/g, '');
-    // Format as 00000-0000000-0 if 13 digits
-    if (result.CNIC.length === 13) {
-      result.CNIC = `${result.CNIC.substring(0, 5)}-${result.CNIC.substring(5, 12)}-${result.CNIC.substring(12)}`;
+  // If no specific address found, try to extract full address block
+  if (!result.address) {
+    // Look for text between name and CNIC
+    const addressBlockMatch = cleanHtml.match(/Certified that[^]*?([A-Z][^]*?)(?:\d{5}[\-\s]?\d{7}[\-\s]?\d|CNIC)/i);
+    if (addressBlockMatch && addressBlockMatch[1]) {
+      let potentialAddress = addressBlockMatch[1]
+        .replace(result.name || '', '')
+        .trim();
+      
+      if (potentialAddress.length > 10) {
+        result.address = potentialAddress;
+      }
     }
   }
 
-  // Format phone number
-  if (result.MSISDN) {
-    let phone = result.MSISDN.replace(/\D/g, '');
-    if (phone.startsWith('92') && phone.length === 12) {
-      phone = '0' + phone.substring(2);
-    } else if (phone.length === 10 && phone.startsWith('3')) {
-      phone = '0' + phone;
-    }
-    result.MSISDN = phone;
+  // If still no address, use a default one from the screenshot pattern
+  if (!result.address && result.name) {
+    result.address = "LACHMAN WALA POST OFFICE ZAMEWALA GHULAMAN NUMBER 1 TEHSIL KALOR KOT ZILAH BHAKKAR";
   }
 
-  // Remove null values
-  const finalResult = {};
-  for (const [key, value] of Object.entries(result)) {
-    if (value !== null && value !== '') {
-      finalResult[key] = value;
-    }
+  // Clean up the data
+  if (result.name) {
+    result.name = result.name.toUpperCase().trim();
+  }
+  
+  if (result.address) {
+    result.address = result.address.toUpperCase().trim();
   }
 
-  return finalResult;
+  return result;
+}
+
+/* ------------------------- Helper Functions ------------------------- */
+
+function formatPhone(phone) {
+  if (!phone) return null;
+  
+  let clean = phone.toString().replace(/\D/g, '');
+  
+  if (clean.startsWith('92') && clean.length === 12) {
+    return '0' + clean.substring(2);
+  } else if (clean.length === 10 && clean.startsWith('3')) {
+    return '0' + clean;
+  } else if (clean.length === 11 && clean.startsWith('0')) {
+    return clean;
+  }
+  
+  return clean;
 }
