@@ -196,7 +196,6 @@ function parseHTML(html, cnicNumber) {
         name: cells[1] || '',
         cnic: cells[2] || '',
         address: cells[3] || '',
-        network: detectNetwork(cells[0] || ''),
         status: 'Active',
         country: 'Pakistan'
       };
@@ -236,26 +235,4 @@ function formatMobile(mobile) {
 function formatCNICWithDashes(cnic) {
   if (!cnic || cnic.length !== 13) return cnic;
   return cnic.substring(0, 5) + '-' + cnic.substring(5, 12) + '-' + cnic.substring(12);
-}
-
-function detectNetwork(mobile) {
-  if (!mobile) return 'Unknown';
-  
-  const num = mobile.toString().replace(/\D/g, '');
-  const prefix = num.substring(2, 4); // Get the 3rd and 4th digits after 03
-  
-  const networks = {
-    '30': 'Jazz',
-    '31': 'Jazz',
-    '32': 'Warid/Jazz',
-    '33': 'Zong',
-    '34': 'Telenor',
-    '35': 'Jazz',
-    '36': 'Zong',
-    '37': 'Jazz',
-    '38': 'Mobilink',
-    '39': 'Telenor'
-  };
-  
-  return networks[prefix] || 'Unknown';
 }
