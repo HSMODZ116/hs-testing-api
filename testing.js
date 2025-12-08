@@ -22,7 +22,7 @@ export default {
         return new Response(JSON.stringify({
           success: false,
           error: 'Not found',
-          message: 'Use Telenor mobile number starting with 0344, 0345, 0346, 0347'
+          message: 'Use mobile number in format: 03451234567 or 923451234567'
         }, null, 2), {
           status: 404,
           headers: { 'Content-Type': 'application/json' }
@@ -35,7 +35,7 @@ export default {
         return Response.json({
           success: false,
           error: 'Phone number is required',
-          message: 'Use Telenor mobile number starting with 03'
+          message: 'Enter mobile number starting with 03 or 92'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
@@ -51,19 +51,19 @@ export default {
         phoneNumber = '0' + cleanedNum;
       }
 
-      // Validate Telenor number ONLY (0344, 0345, 0346, 0347)
-      if (!/^03[4-7]\d{8}$/.test(phoneNumber)) {
+      // ALLOW ALL TYPES OF NUMBERS - NO RESTRICTION HERE
+      if (!/^03\d{9}$/.test(phoneNumber)) {
         return Response.json({
           success: false,
-          error: 'Invalid Telenor mobile number',
-          message: 'Only Telenor numbers are supported: 0344, 0345, 0346, 0347'
+          error: 'Invalid mobile number format',
+          message: 'Please enter valid Pakistani mobile number (03451234567 or 923451234567)'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Fetch data
+      // Fetch data for all numbers
       const data = await fetchTelenorData(phoneNumber);
       
       // Return response
@@ -124,7 +124,7 @@ async function fetchTelenorData(phoneNumber) {
   } catch (error) {
     return {
       success: false,
-      message: 'Failed to fetch Telenor data'
+      message: 'Failed to fetch data'
     };
   }
 }
@@ -134,10 +134,11 @@ function extractTelenorData(html, phoneNumber) {
   // Check if no records found
   if (html.includes('No record found') || 
       html.toLowerCase().includes('not found') ||
-      (html.includes('Sorry') && html.includes('found'))) {
+      (html.includes('Sorry') && html.includes('found')) ||
+      html.includes('Click here for New Search')) {
     return {
       success: false,
-      message: 'No Telenor record found for this number'
+      message: 'No record found for this number'
     };
   }
 
@@ -146,12 +147,12 @@ function extractTelenorData(html, phoneNumber) {
     record: {
       mobile: phoneNumber,
       name: '',
-      cnic: '', // CNIC field added
+      cnic: '',
       address: '',
       network: 'Telenor',
       developer: 'Haseeb Sahil'
     },
-    message: 'Telenor data retrieved successfully'
+    message: 'Data retrieved successfully'
   };
 
   // ===== CLEAN HTML AND CONVERT TO TEXT =====
@@ -167,7 +168,6 @@ function extractTelenorData(html, phoneNumber) {
   const upperText = cleanText.toUpperCase();
 
   // ===== EXTRACT NAME =====
-  // Look for name in Telenor certificate format
   const nameRegex = /HAS BEEN\s+([A-Z][A-Z\s]+?)\s+(?:DEDUCTED|COLLECTED|FROM)/i;
   const nameMatch = upperText.match(nameRegex);
   
@@ -176,11 +176,13 @@ function extractTelenorData(html, phoneNumber) {
   }
 
   // ===== EXTRACT CNIC =====
-  // Look for CNIC number in various formats
+  // Better CNIC extraction - look in the "on" row where CNIC is
   const cnicPatterns = [
-    /CNIC\s*NO\s*[\.:]*\s*(\d{5}-\d{7}-\d{1})/i,
-    /HOLDER\s+OF\s+CNIC\s*NO\s*[\.:]*\s*(\d{5}-\d{7}-\d{1})/i,
-    /CNIC\s*(\d{5}-\d{7}-\d{1})/i,
+    /ON\s+(\d{5}-\d{7}-\d{1})/i,
+    /ON\s+(\d{13})/i,
+    /ON\s+(\d{5}\s*\d{7}\s*\d{1})/i,
+    /HOLDER OF CNIC NO\.\s*(\d{5}-\d{7}-\d{1})/i,
+    /CNIC NO\.\s*(\d{5}-\d{7}-\d{1})/i,
     /(\d{5}-\d{7}-\d{1})/,
     /(\d{13})/
   ];
@@ -188,7 +190,7 @@ function extractTelenorData(html, phoneNumber) {
   for (const pattern of cnicPatterns) {
     const cnicMatch = upperText.match(pattern);
     if (cnicMatch && cnicMatch[1]) {
-      const cnic = cnicMatch[1].replace(/-/g, '');
+      const cnic = cnicMatch[1].replace(/[-\s]/g, '');
       if (cnic.length === 13 && cnic !== '0000000000000') {
         result.record.cnic = cnic;
         break;
@@ -202,35 +204,56 @@ function extractTelenorData(html, phoneNumber) {
     if (nameIndex !== -1) {
       const textAfterName = upperText.substring(nameIndex + result.record.name.length);
       
+      // Remove "DEDUCTED/COLLECTED FROM" from start
+      let addressText = textAfterName.replace(/^(?:\s*(?:DEDUCTED|COLLECTED|FROM))+\s*/i, '');
+      
       // Find address ending
-      const endMarkers = ['HAVING NTN', 'HOLDER OF CNIC', 'CNIC', 'ON 00'];
+      const endMarkers = ['HAVING NTN', 'HOLDER OF CNIC', 'CNIC', 'ON'];
       let endIndex = -1;
       
       for (const marker of endMarkers) {
-        const index = textAfterName.indexOf(marker);
+        const index = addressText.indexOf(marker);
         if (index !== -1 && (endIndex === -1 || index < endIndex)) {
           endIndex = index;
         }
       }
       
       if (endIndex === -1) {
-        endIndex = Math.min(200, textAfterName.length);
+        endIndex = Math.min(300, addressText.length);
       }
       
       if (endIndex > 0) {
-        const rawAddress = textAfterName.substring(0, endIndex);
-        // Remove DEDUCTED/COLLECTED/FROM from beginning of address
-        const cleanedAddress = rawAddress.replace(/^(?:\s*(?:DEDUCTED|COLLECTED|FROM))+\s*/i, '');
-        result.record.address = cleanTextContent(cleanedAddress);
+        const rawAddress = addressText.substring(0, endIndex);
+        result.record.address = cleanTextContent(rawAddress);
       }
     }
+  }
+
+  // ===== ALTERNATIVE ADDRESS EXTRACTION =====
+  if (!result.record.address && result.record.name) {
+    // Try more specific pattern
+    const addressRegex = /DEDUCTED\/COLLECTED FROM\s+([A-Z\s.,\-]+?)(?=\s+(?:HAVING|HOLDER|CNIC|ON))/i;
+    const addressMatch = upperText.match(addressRegex);
+    
+    if (addressMatch && addressMatch[1]) {
+      result.record.address = cleanTextContent(addressMatch[1]);
+    }
+  }
+
+  // ===== CLEAN ADDRESS =====
+  if (result.record.address) {
+    // Remove dots and extra spaces
+    result.record.address = result.record.address
+      .replace(/\.{2,}/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   // ===== FINAL VALIDATION =====
   if (!result.record.name && !result.record.address && !result.record.cnic) {
     return {
       success: false,
-      message: 'No valid Telenor data found'
+      message: 'No valid data found'
     };
   }
 
