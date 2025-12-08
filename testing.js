@@ -1,7 +1,5 @@
-// Pakistani SIM Owner Details API (Unified)
-// File: unified-worker.js
-// Supports: Telenor (0344, 0345, 0346, 0347) and Jazz/Warid networks
-// Developer: Haseeb Sahil
+// CNIC Search API - Pak Sim Owner Details
+// File: worker.js
 
 export default {
   async fetch(request) {
@@ -25,70 +23,52 @@ export default {
         return new Response(JSON.stringify({
           success: false,
           error: 'Not found',
-          message: 'Use Pakistani mobile number starting with 03'
+          message: 'Use CNIC number for search'
         }, null, 2), {
           status: 404,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Get the number parameter
-      const num = url.searchParams.get('num');
+      // Get the CNIC parameter
+      const cnic = url.searchParams.get('cnic');
 
-      // If no num parameter
-      if (!num) {
+      // If no cnic parameter
+      if (!cnic) {
         return Response.json({
           success: false,
-          error: 'Phone number is required',
-          message: 'Use Pakistani mobile number starting with 03'
+          error: 'CNIC number is required',
+          message: 'Please provide CNIC number for search'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Clean the input - remove all non-digits
-      const cleanedNum = num.toString().replace(/\D/g, '');
+      // Clean the CNIC - remove all non-digits
+      const cleanedCNIC = cnic.toString().replace(/\D/g, '');
       
-      // Add leading zero if needed
-      let phoneNumber = cleanedNum;
-      if (cleanedNum.startsWith('92') && cleanedNum.length === 12) {
-        phoneNumber = '0' + cleanedNum.substring(2);
-      } else if (cleanedNum.startsWith('3') && cleanedNum.length === 10) {
-        phoneNumber = '0' + cleanedNum;
-      }
-
-      // Validate Pakistani number format
-      if (!/^03\d{9}$/.test(phoneNumber)) {
+      // Validate CNIC format (13 digits without dashes)
+      if (!/^\d{13}$/.test(cleanedCNIC)) {
         return Response.json({
           success: false,
-          error: 'Invalid Pakistani mobile number',
-          message: 'Use Pakistani mobile number starting with 03 (10 digits after 03)'
+          error: 'Invalid CNIC format',
+          message: 'CNIC must be 13 digits (without dashes)'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Determine network based on prefix
-      const network = determineNetwork(phoneNumber);
+      // Fetch data using CNIC
+      const data = await fetchDataByCNIC(cleanedCNIC);
       
-      // Fetch data based on network
-      let data;
-      if (network === 'Telenor') {
-        data = await fetchTelenorData(phoneNumber);
-      } else {
-        data = await fetchGenericData(phoneNumber);
-      }
-      
-      // Return unified response
+      // Return response
       return Response.json({
-        success: data.success !== false,
-        phone: phoneNumber,
-        network: network,
-        data: data.record || data.records || data,
-        message: data.message || 'Data retrieved successfully',
-        developer: 'Haseeb Sahil'
+        success: true,
+        cnic: cleanedCNIC,
+        data: data,
+        count: data.records.length
       }, {
         headers: {
           'Content-Type': 'application/json',
@@ -100,8 +80,7 @@ export default {
       return Response.json({
         success: false,
         error: 'Server error',
-        message: error.message,
-        developer: 'Haseeb Sahil'
+        message: error.message
       }, {
         status: 500,
         headers: { 'Content-Type': 'application/json' }
@@ -110,32 +89,13 @@ export default {
   }
 };
 
-// ========== NETWORK DETECTION ==========
-function determineNetwork(phoneNumber) {
-  const prefix = phoneNumber.substring(0, 4);
-  
-  // Telenor prefixes
-  if (['0344', '0345', '0346', '0347'].includes(prefix)) {
-    return 'Telenor';
-  }
-  
-  // Jazz/Warid prefixes (common ones)
-  if (['0300', '0301', '0302', '0303', '0304', '0305', 
-       '0306', '0307', '0308', '0309', '0320', '0321', 
-       '0322', '0323', '0324', '0325'].includes(prefix)) {
-    return 'Jazz/Warid';
-  }
-  
-  // Default to generic
-  return 'Pakistani';
-}
-
-// ========== FETCH GENERIC DATA (Jazz/Warid format) ==========
-async function fetchGenericData(phoneNumber) {
+// ========== FETCH DATA BY CNIC ==========
+async function fetchDataByCNIC(cnicNumber) {
   const url = 'https://paksimownerdetails.com/SecureInfo.php';
   
+  // Create form data - using CNIC instead of phone number
   const formData = new URLSearchParams();
-  formData.append('number', phoneNumber);
+  formData.append('number', cnicNumber); // Website accepts CNIC in same field
   formData.append('search', 'search');
 
   try {
@@ -157,65 +117,31 @@ async function fetchGenericData(phoneNumber) {
     });
 
     const html = await response.text();
-    return parseHTMLData(html, phoneNumber);
+    return parseHTML(html, cnicNumber);
     
   } catch (error) {
     return {
       success: false,
+      records: [],
       message: 'Failed to fetch data'
     };
   }
 }
 
-// ========== FETCH TELENOR DATA ==========
-async function fetchTelenorData(phoneNumber) {
-  const url = 'https://paksimownerdetails.com/SecureInfo.php';
-  
-  const formData = new URLSearchParams();
-  formData.append('number', phoneNumber);
-  formData.append('search', 'search');
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Origin': 'https://paksimownerdetails.com',
-        'Referer': 'https://paksimownerdetails.com/',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'same-origin',
-        'Upgrade-Insecure-Requests': '1'
-      },
-      body: formData.toString()
-    });
-
-    const html = await response.text();
-    return extractTelenorData(html, phoneNumber);
-    
-  } catch (error) {
-    return {
-      success: false,
-      message: 'Failed to fetch Telenor data'
-    };
-  }
-}
-
-// ========== HTML PARSER FOR GENERIC DATA ==========
-function parseHTMLData(html, phoneNumber) {
+// ========== HTML PARSER ==========
+function parseHTML(html, cnicNumber) {
   const result = {
-    success: false,
+    success: true,
     records: [],
-    message: 'No records found'
+    message: 'Data retrieved successfully'
   };
 
   // Check if no records found
   if (html.includes('No record found') || 
       html.toLowerCase().includes('not found') ||
       (html.includes('Sorry') && html.includes('found'))) {
+    result.success = false;
+    result.message = 'No records found for this CNIC';
     return result;
   }
 
@@ -228,7 +154,7 @@ function parseHTMLData(html, phoneNumber) {
     rows.push(rowMatch[1]);
   }
 
-  // Skip header row (first row with th tags)
+  // Filter only rows that contain the CNIC
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     
@@ -236,6 +162,14 @@ function parseHTMLData(html, phoneNumber) {
     if (row.includes('<th>') || row.toLowerCase().includes('mobile') && 
         row.toLowerCase().includes('name') && row.toLowerCase().includes('cnic')) {
       continue;
+    }
+
+    // Check if row contains the CNIC (with or without dashes)
+    const rowContainsCNIC = row.includes(cnicNumber) || 
+                           row.includes(formatCNICWithDashes(cnicNumber));
+    
+    if (!rowContainsCNIC) {
+      continue; // Skip rows that don't have this CNIC
     }
 
     // Extract cells from row
@@ -258,123 +192,25 @@ function parseHTMLData(html, phoneNumber) {
     // We need at least 4 columns: Mobile, Name, CNIC, Address
     if (cells.length >= 4) {
       const record = {
-        mobile: formatMobile(cells[0] || '') || phoneNumber,
+        mobile: formatMobile(cells[0] || ''),
         name: cells[1] || '',
-        cnic: formatCNIC(cells[2] || ''),
+        cnic: cells[2] || '',
         address: cells[3] || '',
-        status: cells[4] || 'Active',
+        network: detectNetwork(cells[0] || ''),
+        status: 'Active',
         country: 'Pakistan'
       };
 
-      // Validate record has at least mobile or name
-      if (record.mobile || record.name) {
+      // Only add if mobile number is valid
+      if (record.mobile && /^03\d{9}$/.test(record.mobile)) {
         result.records.push(record);
-        result.success = true;
-        result.message = 'Data retrieved successfully';
       }
     }
   }
 
-  // If no records found but HTML contains Telenor-like certificate format
-  if (result.records.length === 0 && html.includes('TELENOR')) {
-    // Try Telenor extraction as fallback
-    const telenorData = extractTelenorData(html, phoneNumber);
-    if (telenorData.success) {
-      return telenorData;
-    }
-  }
-
-  return result;
-}
-
-// ========== EXTRACT TELENOR DATA ==========
-function extractTelenorData(html, phoneNumber) {
-  // Check if no records found
-  if (html.includes('No record found') || 
-      html.toLowerCase().includes('not found') ||
-      (html.includes('Sorry') && html.includes('found'))) {
-    return {
-      success: false,
-      message: 'No record found for this number'
-    };
-  }
-
-  const result = {
-    success: true,
-    record: {
-      mobile: phoneNumber,
-      name: '',
-      address: '',
-      cnic: '',
-      network: 'Telenor',
-      status: 'Active',
-      country: 'Pakistan'
-    },
-    message: 'Telenor data retrieved successfully'
-  };
-
-  // ===== CLEAN HTML AND CONVERT TO TEXT =====
-  let cleanText = html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const upperText = cleanText.toUpperCase();
-
-  // ===== EXTRACT NAME =====
-  // Look for name in Telenor certificate format
-  const nameRegex = /HAS BEEN\s+([A-Z][A-Z\s]+?)\s+(?:DEDUCTED|COLLECTED|FROM)/i;
-  const nameMatch = upperText.match(nameRegex);
-  
-  if (nameMatch && nameMatch[1]) {
-    result.record.name = cleanTextContent(nameMatch[1]);
-  }
-
-  // ===== EXTRACT CNIC =====
-  const cnicRegex = /CNIC\s*[:-\s]*(\d{5}[-]?\d{7}[-]?\d{1})/i;
-  const cnicMatch = upperText.match(cnicRegex);
-  
-  if (cnicMatch && cnicMatch[1]) {
-    result.record.cnic = cnicMatch[1].replace(/\D/g, '');
-  }
-
-  // ===== EXTRACT ADDRESS =====
-  if (result.record.name) {
-    const nameIndex = upperText.indexOf(result.record.name.toUpperCase());
-    if (nameIndex !== -1) {
-      const textAfterName = upperText.substring(nameIndex + result.record.name.length);
-      
-      // Find address ending
-      const endMarkers = ['HAVING NTN', 'HOLDER OF CNIC', 'CNIC', 'ON 00'];
-      let endIndex = -1;
-      
-      for (const marker of endMarkers) {
-        const index = textAfterName.indexOf(marker);
-        if (index !== -1 && (endIndex === -1 || index < endIndex)) {
-          endIndex = index;
-        }
-      }
-      
-      if (endIndex === -1) {
-        endIndex = Math.min(200, textAfterName.length);
-      }
-      
-      if (endIndex > 0) {
-        result.record.address = cleanTextContent(textAfterName.substring(0, endIndex));
-      }
-    }
-  }
-
-  // ===== FINAL VALIDATION =====
-  if (!result.record.name && !result.record.address && !result.record.cnic) {
-    return {
-      success: false,
-      message: 'No valid data found for this number'
-    };
+  if (result.records.length === 0) {
+    result.success = false;
+    result.message = 'No valid mobile records found for this CNIC';
   }
 
   return result;
@@ -397,20 +233,29 @@ function formatMobile(mobile) {
   return cleaned;
 }
 
-function formatCNIC(cnic) {
-  if (!cnic) return '';
-  
-  // Remove all non-digits including hyphens
-  let cleaned = cnic.replace(/\D/g, '');
-  
-  // Return only digits without any formatting
-  return cleaned;
+function formatCNICWithDashes(cnic) {
+  if (!cnic || cnic.length !== 13) return cnic;
+  return cnic.substring(0, 5) + '-' + cnic.substring(5, 12) + '-' + cnic.substring(12);
 }
 
-function cleanTextContent(text) {
-  return text
-    .replace(/[^A-Z\s.,\-]/gi, ' ')  // Keep letters, spaces, dots, commas and hyphens
-    .replace(/\s+/g, ' ')            // Remove extra spaces
-    .replace(/\.{2,}/g, ' ')         // Remove multiple dots
-    .trim();
+function detectNetwork(mobile) {
+  if (!mobile) return 'Unknown';
+  
+  const num = mobile.toString().replace(/\D/g, '');
+  const prefix = num.substring(2, 4); // Get the 3rd and 4th digits after 03
+  
+  const networks = {
+    '30': 'Jazz',
+    '31': 'Jazz',
+    '32': 'Warid/Jazz',
+    '33': 'Zong',
+    '34': 'Telenor',
+    '35': 'Jazz',
+    '36': 'Zong',
+    '37': 'Jazz',
+    '38': 'Mobilink',
+    '39': 'Telenor'
+  };
+  
+  return networks[prefix] || 'Unknown';
 }
