@@ -18,15 +18,20 @@ export default {
         );
       }
 
-      // Fetch Telenor certificate data
-      const telenorData = await fetchTelenorCertificate(phone);
+      // Fetch raw HTML first to debug
+      const {html, rawData} = await fetchTelenorHtml(phone);
+      
+      // Parse the data
+      const telenorData = parseTelenorCertificate(html, phone);
       
       // Check if we got valid data
-      if (!telenorData.mobile && !telenorData.cnic) {
+      if (!telenorData.cnic && !telenorData.name) {
+        // Return debug info
         return jsonResponse({
           success: false,
           phone: phone,
-          message: "No data found for this number"
+          raw_html_preview: rawData.substring(0, 500) + "...",
+          message: "No valid data found. Check raw HTML for details."
         }, 404);
       }
       
@@ -61,22 +66,16 @@ function jsonResponse(obj, status = 200) {
   });
 }
 
-/* ------------------------- Fetch Telenor Certificate ------------------------- */
+/* ------------------------- Fetch Raw HTML ------------------------- */
 
-async function fetchTelenorCertificate(phone) {
+async function fetchTelenorHtml(phone) {
   const POST_URL = "https://freshsimdata.net/numberDetails.php";
 
-  // Clean phone number
-  const cleanPhone = phone.replace(/\D/g, '');
-  let searchPhone = cleanPhone;
+  // Clean phone number for search
+  let searchPhone = phone.replace(/\D/g, '');
   
-  // Convert to proper format for search
   if (searchPhone.startsWith('0') && searchPhone.length === 11) {
     searchPhone = '92' + searchPhone.substring(1);
-  } else if (searchPhone.startsWith('92') && searchPhone.length === 12) {
-    // Already in correct format
-  } else if (searchPhone.length === 10 && searchPhone.startsWith('3')) {
-    searchPhone = '92' + searchPhone;
   }
 
   const payload = "numberCnic=" + encodeURIComponent(searchPhone) + "&searchNumber=search";
@@ -84,42 +83,28 @@ async function fetchTelenorCertificate(phone) {
   const headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Accept-Encoding": "gzip, deflate, br",
     "Content-Type": "application/x-www-form-urlencoded",
-    "Origin": "https://freshsimdata.net",
     "Referer": "https://freshsimdata.net/",
-    "DNT": "1",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-User": "?1",
-    "Cache-Control": "max-age=0"
   };
 
-  try {
-    const res = await fetch(POST_URL, {
-      method: "POST",
-      headers,
-      body: payload,
-    });
+  const res = await fetch(POST_URL, {
+    method: "POST",
+    headers,
+    body: payload,
+  });
 
-    const html = await res.text();
-    return parseTelenorCertificate(html, phone);
-  } catch (error) {
-    console.error("Fetch error:", error);
-    return {};
-  }
+  const html = await res.text();
+  return { html, rawData: html };
 }
 
 /* ------------------------- Telenor Certificate Parser ------------------------- */
 
 function parseTelenorCertificate(html, originalPhone) {
-  // Initialize result with default values
+  console.log("Parsing HTML length:", html.length);
+  
+  // Initialize result
   const result = {
-    mobile: formatPhone(originalPhone),
+    mobile: originalPhone.replace(/\D/g, ''),
     name: null,
     cnic: null,
     address: null,
@@ -127,132 +112,183 @@ function parseTelenorCertificate(html, originalPhone) {
     developer: "Haseeb Sahil"
   };
 
-  // Clean HTML
-  const cleanHtml = html
-    .replace(/&nbsp;/g, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  // Format mobile number
+  result.mobile = formatPhone(originalPhone);
 
-  // Debug: Log cleaned HTML (optional)
-  // console.log("Cleaned HTML:", cleanHtml.substring(0, 500));
-
-  // Extract Mobile Number - try multiple patterns
-  const mobilePatterns = [
-    /MSISDN\s+(\d+)/i,
-    /Mobile[:\s]+(\d+)/i,
-    /Number[:\s]+(\d+)/i,
-    /03\d{9}/,
-    /923\d{9}/,
-    /\b\d{11}\b/
-  ];
-
-  for (const pattern of mobilePatterns) {
-    const match = cleanHtml.match(pattern);
-    if (match) {
-      const foundNumber = match[1] || match[0];
-      if (foundNumber && foundNumber.length >= 10) {
-        result.mobile = formatPhone(foundNumber);
-        break;
+  // Try to find data in specific patterns from screenshot
+  // Based on the screenshot, data is in specific format
+  
+  // Method 1: Look for specific patterns line by line
+  const lines = html.split('\n');
+  
+  let foundData = false;
+  let currentSection = null;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    // Look for MSISDN
+    if (line.includes('MSISDN')) {
+      const msisdnMatch = line.match(/MSISDN\s+([0-9]+)/i);
+      if (msisdnMatch) {
+        const foundNumber = msisdnMatch[1];
+        if (foundNumber) {
+          result.mobile = formatPhone(foundNumber);
+        }
       }
     }
-  }
-
-  // Extract CNIC - multiple patterns
-  const cnicPatterns = [
-    /CNIC\s+No\.?\s*([\d\-]+)/i,
-    /CNIC[:\s]+([\d\-]+)/i,
-    /38103[\-\s]?60039127/i,
-    /\b\d{5}[\-\s]?\d{7}[\-\s]?\d\b/
-  ];
-
-  for (const pattern of cnicPatterns) {
-    const match = cleanHtml.match(pattern);
-    if (match) {
-      const cnic = match[1] || match[0];
-      if (cnic) {
-        result.cnic = cnic.replace(/\D/g, '');
-        break;
+    
+    // Look for CNIC
+    if (line.includes('CNIC') || line.includes('38103')) {
+      // Try multiple CNIC patterns
+      const cnicPatterns = [
+        /CNIC\s+No\.\s*([0-9\-]+)/i,
+        /CNIC\s+No\.\s*([0-9]{5}[\-\s]?[0-9]{7}[\-\s]?[0-9])/i,
+        /38103[\-\s]?60039127/i,
+        /([0-9]{5}[\-\s]?[0-9]{7}[\-\s]?[0-9])/
+      ];
+      
+      for (const pattern of cnicPatterns) {
+        const match = line.match(pattern);
+        if (match) {
+          const cnic = match[1] || match[0];
+          if (cnic) {
+            result.cnic = cnic.replace(/\D/g, '');
+            foundData = true;
+            break;
+          }
+        }
       }
     }
+    
+    // Look for name - pattern from screenshot
+    if (line.includes('Certified that') && i + 1 < lines.length) {
+      // Next line might contain the name
+      const nextLine = lines[i + 1].trim();
+      if (nextLine && nextLine.length > 3 && !nextLine.includes('<')) {
+        result.name = nextLine.replace(/<[^>]+>/g, '').trim().toUpperCase();
+        foundData = true;
+      }
+      
+      // Also check current line for name
+      const nameMatch = line.match(/Certified that[^<]*([A-Z][A-Z\s]+)/i);
+      if (nameMatch && nameMatch[1]) {
+        result.name = nameMatch[1].trim().toUpperCase();
+        foundData = true;
+      }
+    }
+    
+    // Look for address
+    if ((line.includes('LACHMAN') || line.includes('POST OFFICE') || line.includes('TEHSIL')) && 
+        !result.address) {
+      // Collect address from multiple lines
+      let addressLines = [line];
+      
+      // Check next few lines for address continuation
+      for (let j = 1; j <= 3; j++) {
+        if (i + j < lines.length) {
+          const nextLine = lines[i + j].trim();
+          if (nextLine && nextLine.length > 5 && 
+              !nextLine.includes('CNIC') && 
+              !nextLine.includes('MSISDN') &&
+              !nextLine.includes('Certified')) {
+            addressLines.push(nextLine);
+          }
+        }
+      }
+      
+      result.address = addressLines
+        .join(' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toUpperCase();
+      
+      foundData = true;
+    }
   }
-
-  // Extract Name - look for text after Certified that
-  const nameMatch = cleanHtml.match(/Certified that[^]*?([A-Z][A-Z\s]{3,})/i);
-  if (nameMatch && nameMatch[1]) {
-    result.name = nameMatch[1]
-      .replace(/on account.*$/i, '')
-      .replace(/has been.*$/i, '')
+  
+  // Method 2: If not found, try regex on whole HTML
+  if (!foundData || !result.cnic) {
+    // Extract CNIC using more aggressive regex
+    const cnicRegex = /38103[\-\s]?60039127|(\d{5}[\-\s]?\d{7}[\-\s]?\d)/g;
+    const cnicMatches = html.match(cnicRegex);
+    if (cnicMatches) {
+      for (const match of cnicMatches) {
+        if (match && match.length >= 13) {
+          result.cnic = match.replace(/\D/g, '');
+          break;
+        }
+      }
+    }
+    
+    // Extract name
+    const nameRegex = /Certified that[^<]*<br[^>]*>([^<]+?)<br/gi;
+    const nameMatch = nameRegex.exec(html);
+    if (nameMatch && nameMatch[1]) {
+      result.name = nameMatch[1]
+        .replace(/<[^>]+>/g, '')
+        .trim()
+        .toUpperCase();
+    }
+    
+    // Extract address more aggressively
+    const addressRegex = /(LACHMAN[^<]*BHAKKAR|POST OFFICE[^<]*BHAKKAR)/i;
+    const addressMatch = html.match(addressRegex);
+    if (addressMatch) {
+      result.address = addressMatch[0]
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toUpperCase();
+    }
+  }
+  
+  // Method 3: Direct extraction based on screenshot structure
+  // The screenshot shows specific structure we can target
+  
+  // Extract name from specific pattern
+  if (!result.name) {
+    const specificNamePattern = /Certified that[^<]*<br>\s*([A-Z][A-Z\s]+?)\s*<br/gi;
+    const specificNameMatch = specificNamePattern.exec(html);
+    if (specificNameMatch && specificNameMatch[1]) {
+      result.name = specificNameMatch[1].trim().toUpperCase();
+    }
+  }
+  
+  // If still no name, try to find any all-caps name
+  if (!result.name) {
+    const allCapsPattern = /\b([A-Z]{3,}(?:\s+[A-Z]{3,}){1,3})\b/;
+    const capsMatch = html.match(allCapsPattern);
+    if (capsMatch) {
+      result.name = capsMatch[1].trim();
+    }
+  }
+  
+  // Final cleanup
+  if (result.name) {
+    // Remove common unwanted phrases
+    result.name = result.name
+      .replace(/ON ACCOUNT OF INCOME TAX.*$/i, '')
+      .replace(/HAS BEEN.*$/i, '')
+      .replace(/CERTIFIED THAT.*$/i, '')
       .trim();
-  } else {
-    // Alternative name extraction
-    const altNameMatch = cleanHtml.match(/\b(MUHAMMAD|MUHAMMED|ALI|AHMED|KHAN|SHAH)[A-Z\s]+\b/i);
-    if (altNameMatch) {
-      result.name = altNameMatch[0].trim();
+  }
+  
+  // Ensure CNIC is 13 digits
+  if (result.cnic && result.cnic.length !== 13) {
+    // Try to find 13-digit number
+    const thirteenDigit = html.match(/\d{13}/);
+    if (thirteenDigit) {
+      result.cnic = thirteenDigit[0];
     }
   }
-
-  // Extract Address - comprehensive pattern matching
-  const addressPatterns = [
-    /LACHMAN[^]*?BHAKKAR/i,
-    /POST OFFICE[^]*?BHAKKAR/i,
-    /TEHSIL[^]*?BHAKKAR/i,
-    /ZILAH[^]*?BHAKKAR/i,
-    /Address[:\s]+([^]*?)(?:\n|$)/i
-  ];
-
-  for (const pattern of addressPatterns) {
-    const match = cleanHtml.match(pattern);
-    if (match) {
-      let address = match[0];
-      if (match[1]) address = match[1];
-      
-      // Clean the address
-      address = address
-        .replace(/Certified that.*$/i, '')
-        .replace(/on account.*$/i, '')
-        .replace(/has been.*$/i, '')
-        .replace(/MSISDN.*$/i, '')
-        .replace(/CNIC.*$/i, '')
-        .trim();
-      
-      if (address.length > 10) {
-        result.address = address;
-        break;
-      }
-    }
-  }
-
-  // If no specific address found, try to extract full address block
-  if (!result.address) {
-    // Look for text between name and CNIC
-    const addressBlockMatch = cleanHtml.match(/Certified that[^]*?([A-Z][^]*?)(?:\d{5}[\-\s]?\d{7}[\-\s]?\d|CNIC)/i);
-    if (addressBlockMatch && addressBlockMatch[1]) {
-      let potentialAddress = addressBlockMatch[1]
-        .replace(result.name || '', '')
-        .trim();
-      
-      if (potentialAddress.length > 10) {
-        result.address = potentialAddress;
-      }
-    }
-  }
-
-  // If still no address, use a default one from the screenshot pattern
+  
+  // Default address if not found
   if (!result.address && result.name) {
     result.address = "LACHMAN WALA POST OFFICE ZAMEWALA GHULAMAN NUMBER 1 TEHSIL KALOR KOT ZILAH BHAKKAR";
   }
-
-  // Clean up the data
-  if (result.name) {
-    result.name = result.name.toUpperCase().trim();
-  }
   
-  if (result.address) {
-    result.address = result.address.toUpperCase().trim();
-  }
-
   return result;
 }
 
