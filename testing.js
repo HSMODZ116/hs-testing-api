@@ -1,4 +1,4 @@
-// Zong Sim Owner Details API
+// CNIC Search API - Pak Sim Owner Details
 // File: worker.js
 
 export default {
@@ -18,63 +18,127 @@ export default {
       const url = new URL(request.url);
       const path = url.pathname;
 
+      // Only handle root path
       if (path !== '/') {
         return new Response(JSON.stringify({
           success: false,
           error: 'Not found',
-          message: 'Use Zong mobile number starting with 031, 032, 033'
+          message: 'Use CNIC number for search'
         }, null, 2), {
           status: 404,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      const num = url.searchParams.get('num');
+      // Get the CNIC parameter
+      const cnic = url.searchParams.get('cnic');
 
-      if (!num) {
+      // If no cnic parameter
+      if (!cnic) {
         return Response.json({
           success: false,
-          error: 'Phone number is required',
-          message: 'Use Zong mobile number starting with 031, 032, 033'
+          error: 'CNIC number is required',
+          message: 'Please provide CNIC number for search'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      const cleanedNum = num.toString().replace(/\D/g, '');
+      // Clean the CNIC - remove all non-digits
+      const cleanedCNIC = cnic.toString().replace(/\D/g, '');
       
-      let phoneNumber = cleanedNum;
-      if (cleanedNum.startsWith('92') && cleanedNum.length === 12) {
-        phoneNumber = '0' + cleanedNum.substring(2);
-      } else if (cleanedNum.startsWith('3') && cleanedNum.length === 10) {
-        phoneNumber = '0' + cleanedNum;
-      }
-
-      // Validate Zong number ONLY (031x, 032x, 033x)
-      if (!/^03[1-3]\d{8}$/.test(phoneNumber)) {
+      // Check CNIC length and give specific error messages
+      const cnicLength = cleanedCNIC.length;
+      
+      if (cnicLength === 0) {
         return Response.json({
           success: false,
-          error: 'Invalid Zong mobile number',
-          message: 'Only Zong numbers are supported: 031, 032, 033'
+          error: 'Empty CNIC',
+          message: 'Please enter a valid CNIC number'
+        }, {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      if (cnicLength < 13) {
+        return Response.json({
+          success: false,
+          error: 'Invalid CNIC length',
+          message: `CNIC is too short (${cnicLength} digits). CNIC must be exactly 13 digits.`,
+          digits_provided: cnicLength,
+          digits_required: 13
+        }, {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      if (cnicLength > 13) {
+        return Response.json({
+          success: false,
+          error: 'Invalid CNIC length',
+          message: `CNIC is too long (${cnicLength} digits). CNIC must be exactly 13 digits.`,
+          digits_provided: cnicLength,
+          digits_required: 13
+        }, {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      // Validate CNIC format (exactly 13 digits without dashes)
+      if (!/^\d{13}$/.test(cleanedCNIC)) {
+        return Response.json({
+          success: false,
+          error: 'Invalid CNIC format',
+          message: 'CNIC must be exactly 13 digits (numbers only, without dashes or spaces)'
+        }, {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      // Additional validation: Check first 5 digits (should be 00001-99999)
+      const firstFive = parseInt(cleanedCNIC.substring(0, 5));
+      if (firstFive < 1 || firstFive > 99999) {
+        return Response.json({
+          success: false,
+          error: 'Invalid CNIC',
+          message: 'CNIC first 5 digits are invalid. Must be between 00001 and 99999.'
+        }, {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      // Additional validation: Check last digit (should be 0-9)
+      const lastDigit = cleanedCNIC.charAt(12);
+      if (!/^\d$/.test(lastDigit)) {
+        return Response.json({
+          success: false,
+          error: 'Invalid CNIC',
+          message: 'CNIC last digit is invalid'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Fetch data
-      const data = await fetchZongData(phoneNumber);
+      // Fetch data using CNIC
+      const data = await fetchDataByCNIC(cleanedCNIC);
       
       // Return response
       return Response.json({
         success: data.success,
-        phone: phoneNumber,
-        data: data.record || null,
-        message: data.message
+        cnic: cleanedCNIC,
+        data: data,
+        count: data.records.length
       }, {
         headers: {
           'Content-Type': 'application/json',
+          'Access-Control-Allow-Headers': '*',
           'Access-Control-Allow-Origin': '*'
         }
       });
@@ -92,12 +156,13 @@ export default {
   }
 };
 
-// ========== FETCH ZONG DATA ==========
-async function fetchZongData(phoneNumber) {
+// ========== FETCH DATA BY CNIC ==========
+async function fetchDataByCNIC(cnicNumber) {
   const url = 'https://paksimownerdetails.com/SecureInfo.php';
   
+  // Create form data - using CNIC instead of phone number
   const formData = new URLSearchParams();
-  formData.append('number', phoneNumber);
+  formData.append('number', cnicNumber); // Website accepts CNIC in same field
   formData.append('search', 'search');
 
   try {
@@ -119,198 +184,215 @@ async function fetchZongData(phoneNumber) {
     });
 
     const html = await response.text();
-    return extractZongData(html, phoneNumber);
+    return extractDataFromHTML(html, cnicNumber);
     
   } catch (error) {
     return {
       success: false,
-      message: 'Failed to fetch Zong data'
+      records: [],
+      message: 'Failed to fetch data from server'
     };
   }
 }
 
-// ========== EXTRACT ZONG DATA ==========
-function extractZongData(html, phoneNumber) {
+// ========== EXTRACT DATA FROM HTML ==========
+function extractDataFromHTML(html, cnicNumber) {
+  const result = {
+    success: true,
+    records: [],
+    message: 'Data retrieved successfully'
+  };
+
   // Check if no records found
   if (html.includes('No record found') || 
       html.toLowerCase().includes('not found') ||
       (html.includes('Sorry') && html.includes('found'))) {
-    return {
-      success: false,
-      message: 'No Zong record found for this number'
-    };
+    result.success = false;
+    result.message = 'No records found for this CNIC';
+    return result;
   }
 
-  const result = {
-    success: true,
-    record: {
-      mobile: phoneNumber,
-      name: '',
-      cnic: '',
-      address: '',
-      network: 'Zong',
-      developer: 'Haseeb Sahil'
-    },
-    message: 'Zong data retrieved successfully'
-  };
-
-  // ===== CLEAN HTML AND CONVERT TO TEXT =====
-  let cleanText = html
+  // Clean HTML and extract text
+  const cleanText = html
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/div>/gi, '\n')
     .replace(/<\/p>/gi, '\n')
+    .replace(/<\/td>/gi, ' ')
+    .replace(/<\/tr>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Case sensitive text (for name extraction)
-  const caseText = cleanText;
-  // Uppercase text (for pattern matching)
+  // Convert to uppercase for easier matching
   const upperText = cleanText.toUpperCase();
+  
+  // Find all occurrences of CNIC in the text
+  const cnicPositions = [];
+  const cnicWithDashes = formatCNICWithDashes(cnicNumber);
+  
+  let searchIndex = 0;
+  while (true) {
+    const cnicIndex = upperText.indexOf(cnicNumber, searchIndex);
+    if (cnicIndex === -1) break;
+    cnicPositions.push(cnicIndex);
+    searchIndex = cnicIndex + 1;
+  }
+  
+  // Also search for CNIC with dashes
+  searchIndex = 0;
+  while (true) {
+    const cnicIndex = upperText.indexOf(cnicWithDashes, searchIndex);
+    if (cnicIndex === -1) break;
+    cnicPositions.push(cnicIndex);
+    searchIndex = cnicIndex + 1;
+  }
 
-  // ===== EXTRACT NAME (REAL NAME) =====
-  // Look for name pattern in the HTML (like "rana usman" in screenshot)
-  const namePatterns = [
-    // Pattern 1: Look for lowercase name after certificate number
-    /CFBHK\d+\-[A-Z]+\s+([a-z\s]+?)\s+\d/,
-    // Pattern 2: Look for name in sentence case
-    /Date of Issue\.\s+\d+\s+[A-Za-z]+\s+\d+\s+([A-Z][a-z]+\s+[A-Z][a-z]+)/,
-    // Pattern 3: Direct name extraction from visible text
-    /MOBILE#:\s+\d+\s+(?:Certified that a sum of\s+)?(?:Rupees\s+)?(?:On account of\s+)?(?:Income Tax\s+)?(?:has been\s+)?(?:collected\/deducted from\s+)?(?:\(Name and address of the person from whom tax collected\/deducted\)\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/
-  ];
+  if (cnicPositions.length === 0) {
+    result.success = false;
+    result.message = 'CNIC not found in response';
+    return result;
+  }
 
-  for (const pattern of namePatterns) {
-    const match = caseText.match(pattern);
-    if (match && match[1]) {
-      const extractedName = match[1].trim();
-      // Validate name (should have at least 2 characters and contain letters)
-      if (extractedName.length >= 2 && /[A-Za-z]/.test(extractedName)) {
-        result.record.name = formatName(extractedName);
-        break;
-      }
+  // Extract data for each CNIC occurrence
+  for (const cnicPosition of cnicPositions) {
+    const record = extractRecordAroundCNIC(cleanText, upperText, cnicPosition, cnicNumber);
+    if (record && record.mobile) {
+      result.records.push(record);
     }
   }
 
-  // ===== EXTRACT CNIC =====
-  // CNIC pattern: 5 digits - 7 digits - 1 digit
-  const cnicRegex = /\b(\d{5}\-\d{7}\-\d)\b/;
-  const cnicMatch = cleanText.match(cnicRegex);
-  if (cnicMatch) {
-    result.record.cnic = cnicMatch[1];
-  }
+  // Remove duplicates based on mobile number
+  result.records = result.records.filter((record, index, self) =>
+    index === self.findIndex(r => r.mobile === record.mobile)
+  );
 
-  // Alternative CNIC extraction
-  if (!result.record.cnic) {
-    const cnicPatterns = [
-      /CNIC[:\s]*(\d{5}\-\d{7}\-\d)/i,
-      /CNIC NO[.\s]*(\d{5}\-\d{7}\-\d)/i,
-      /holder of CNIC no\.\s+(\d{5}\-\d{7}\-\d)/i
-    ];
-    
-    for (const pattern of cnicPatterns) {
-      const match = upperText.match(pattern);
-      if (match && match[1]) {
-        result.record.cnic = match[1];
-        break;
-      }
-    }
-  }
-
-  // ===== EXTRACT ADDRESS =====
-  // Try to extract address based on name position
-  if (result.record.name) {
-    const nameUpper = result.record.name.toUpperCase();
-    const nameIndex = upperText.indexOf(nameUpper);
-    
-    if (nameIndex !== -1) {
-      const textAfterName = upperText.substring(nameIndex + nameUpper.length);
-      
-      // Find address ending markers
-      const endMarkers = ['HAVING NTN', 'HOLDER OF CNIC', 'CNIC', 'ON 00', 'OR DURING'];
-      let endIndex = -1;
-      
-      for (const marker of endMarkers) {
-        const index = textAfterName.indexOf(marker);
-        if (index !== -1 && (endIndex === -1 || index < endIndex)) {
-          endIndex = index;
-        }
-      }
-      
-      if (endIndex === -1) {
-        // If no marker found, take reasonable amount of text
-        endIndex = Math.min(150, textAfterName.length);
-      }
-      
-      if (endIndex > 0) {
-        const addressText = textAfterName.substring(0, endIndex).trim();
-        if (addressText.length > 5) {
-          result.record.address = cleanAddress(addressText);
-        }
-      }
-    }
-  }
-
-  // Alternative address extraction from certificate format
-  if (!result.record.address) {
-    const addressStart = upperText.indexOf('FROM (NAME AND ADDRESS OF THE PERSON');
-    if (addressStart !== -1) {
-      const addressText = upperText.substring(addressStart, addressStart + 300);
-      const addressEndMarkers = ['HAVING', 'HOLDER', 'CNIC'];
-      let addressEnd = -1;
-      
-      for (const marker of addressEndMarkers) {
-        const index = addressText.indexOf(marker);
-        if (index !== -1 && (addressEnd === -1 || index < addressEnd)) {
-          addressEnd = index;
-        }
-      }
-      
-      if (addressEnd > 50) {
-        // Extract the part after the "FROM" description
-        const fromIndex = addressText.indexOf('FROM');
-        if (fromIndex !== -1) {
-          const actualAddress = addressText.substring(fromIndex + 4, addressEnd);
-          result.record.address = cleanAddress(actualAddress);
-        }
-      }
-    }
-  }
-
-  // ===== FINAL VALIDATION =====
-  // At least name or CNIC should be present
-  if (!result.record.name && !result.record.cnic) {
-    return {
-      success: false,
-      message: 'No valid Zong data found (name or CNIC required)'
-    };
+  if (result.records.length === 0) {
+    result.success = false;
+    result.message = 'No valid mobile records found for this CNIC';
   }
 
   return result;
 }
 
+// ========== EXTRACT RECORD AROUND CNIC ==========
+function extractRecordAroundCNIC(cleanText, upperText, cnicPosition, cnicNumber) {
+  const record = {
+    mobile: '',
+    name: '',
+    cnic: cnicNumber,
+    address: '',
+    status: 'Active',
+    country: 'Pakistan'
+  };
+
+  // Extract context around CNIC (200 characters before and after)
+  const start = Math.max(0, cnicPosition - 200);
+  const end = Math.min(upperText.length, cnicPosition + 300);
+  const context = upperText.substring(start, end);
+  
+  // Extract mobile number (look for "MOBILE#" or "03" pattern near CNIC)
+  const mobileRegex = /MOBILE[#:]?\s*(\d{10,11})/gi;
+  const mobileMatch = context.match(mobileRegex);
+  
+  if (mobileMatch) {
+    const mobileNumber = mobileMatch[0].replace(/[^\d]/g, '');
+    record.mobile = formatMobile(mobileNumber);
+  } else {
+    // Alternative: Look for 03xxxxxxxxx pattern near CNIC
+    const altMobileMatch = context.match(/(03\d{9})/);
+    if (altMobileMatch) {
+      record.mobile = formatMobile(altMobileMatch[1]);
+    }
+  }
+
+  // Extract name (look for "from" or "of" patterns)
+  const namePatterns = [
+    /FROM\s+([A-Z][A-Z\s]{2,50}?)\s+(?:HAVING|HOLDER|CNIC|ON)/,
+    /OF\s+([A-Z][A-Z\s]{2,50}?)\s+(?:HAVING|HOLDER|CNIC|ON)/,
+    /RUPEES\s+([A-Z][A-Z\s]{2,50}?)\s+(?:HAVING|HOLDER|CNIC|ON)/,
+    /TAX\s+([A-Z][A-Z\s]{2,50}?)\s+(?:HAVING|HOLDER|CNIC|ON)/
+  ];
+  
+  for (const pattern of namePatterns) {
+    const nameMatch = context.match(pattern);
+    if (nameMatch && nameMatch[1]) {
+      record.name = cleanName(nameMatch[1]);
+      break;
+    }
+  }
+
+  // If name not found with patterns, try to extract from before CNIC
+  if (!record.name) {
+    const beforeCNIC = cleanText.substring(Math.max(0, cnicPosition - 100), cnicPosition);
+    const words = beforeCNIC.split(' ').filter(w => w.length > 2);
+    if (words.length > 0) {
+      // Take the last meaningful word before CNIC as possible name
+      for (let i = words.length - 1; i >= 0; i--) {
+        const word = words[i].trim();
+        if (/^[A-Z][A-Z\s]+$/.test(word.toUpperCase())) {
+          record.name = cleanName(word);
+          break;
+        }
+      }
+    }
+  }
+
+  // Extract address (text after name or CNIC)
+  let addressStart = cnicPosition + cnicNumber.length;
+  if (record.name && upperText.indexOf(record.name) !== -1) {
+    addressStart = upperText.indexOf(record.name) + record.name.length;
+  }
+  
+  const addressText = cleanText.substring(addressStart, Math.min(cleanText.length, addressStart + 200));
+  
+  // Clean address text
+  const address = addressText
+    .replace(/HAVING.*|HOLDER.*|CNIC.*|ON.*|DATE.*|PERIOD.*|FROM.*|TO.*/gi, '')
+    .replace(/[^A-Z\s.,\-0-9]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  
+  if (address && address.length > 3 && !address.includes('CERTIFIED') && !address.includes('TAX')) {
+    record.address = address;
+  }
+
+  return record;
+}
+
 // ========== HELPER FUNCTIONS ==========
-function cleanTextContent(text) {
-  return text
-    .replace(/[^A-Za-z\s.,\-]/g, ' ')  // Keep letters, spaces, dots, commas and hyphens
-    .replace(/\s+/g, ' ')               // Remove extra spaces
-    .replace(/\.{2,}/g, ' ')            // Remove multiple dots
-    .trim();
+function formatMobile(mobile) {
+  if (!mobile) return '';
+  
+  // Remove all non-digits
+  let cleaned = mobile.replace(/\D/g, '');
+  
+  // Ensure proper format
+  if (cleaned.startsWith('92') && cleaned.length === 12) {
+    cleaned = '0' + cleaned.substring(2);
+  } else if (cleaned.startsWith('3') && cleaned.length === 10) {
+    cleaned = '0' + cleaned;
+  }
+  
+  // Ensure it's a valid Pakistani mobile
+  if (!/^03\d{9}$/.test(cleaned)) {
+    return '';
+  }
+  
+  return cleaned;
 }
 
-function cleanAddress(text) {
-  return text
-    .replace(/[^A-Za-z0-9\s.,\-\/]/g, ' ')  // Keep alphanumeric and common address characters
-    .replace(/\s+/g, ' ')                   // Remove extra spaces
-    .replace(/\([^)]*\)/g, ' ')             // Remove parentheses content
-    .trim();
-}
-
-function formatName(name) {
-  // Capitalize first letter of each word
+function cleanName(name) {
   return name
-    .toLowerCase()
+    .replace(/[^A-Z\s]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
     .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
+}
+
+function formatCNICWithDashes(cnic) {
+  if (!cnic || cnic.length !== 13) return cnic;
+  return cnic.substring(0, 5) + '-' + cnic.substring(5, 12) + '-' + cnic.substring(12);
 }
