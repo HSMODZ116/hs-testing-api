@@ -135,6 +135,7 @@ function extractTelenorData(html, phoneNumber) {
   if (html.includes('No record found') || 
       html.toLowerCase().includes('not found') ||
       (html.includes('Sorry') && html.includes('found')) ||
+      html.includes('VIP Paid Services') ||
       html.includes('Click here for New Search')) {
     return {
       success: false,
@@ -149,103 +150,132 @@ function extractTelenorData(html, phoneNumber) {
       name: '',
       cnic: '',
       address: '',
-      network: 'Telenor', // Default Telenor always
+      network: 'Telenor',
       developer: 'Haseeb Sahil'
     },
     message: 'Data retrieved successfully'
   };
 
-  // ===== EXTRACT NAME =====
-  // Look for name in table structure
-  const namePatterns = [
-    /deducted\/collected from<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
-    /<td[^>]*>deducted\/collected from<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
-    /deducted\/collected from.*?<td[^>]*>([^<]+)<\/td>/i
-  ];
-
-  for (const pattern of namePatterns) {
-    const match = html.match(pattern);
-    if (match && match[1]) {
-      const name = match[1].trim();
-      if (name && name.length > 1 && !name.includes('border-bottom') && name !== '.' && !/^[.\s]+$/.test(name)) {
+  // ===== DIRECT TABLE PARSING =====
+  // Extract data directly from table structure
+  
+  // 1. Extract Name from table
+  const nameMatch = html.match(/<td[^>]*colspan="[^"]*"[^>]*>([^<]+)<\/td>\s*<\/tr>\s*<tr[^>]*>\s*<td[^>]*>deducted\/collected from<\/td>/i);
+  if (nameMatch && nameMatch[1]) {
+    const name = nameMatch[1].trim();
+    if (name && !name.includes('border-bottom') && name !== '.') {
+      result.record.name = cleanTextContent(name);
+    }
+  }
+  
+  // Alternative name extraction
+  if (!result.record.name) {
+    const namePattern = /deducted\/collected from<\/td>\s*<td[^>]*colspan="3"[^>]*>([^<]+)<\/td>/i;
+    const nameAltMatch = html.match(namePattern);
+    if (nameAltMatch && nameAltMatch[1]) {
+      const name = nameAltMatch[1].trim();
+      if (name && name !== '.' && !name.includes('border-bottom')) {
         result.record.name = cleanTextContent(name);
-        break;
       }
     }
   }
 
-  // ===== EXTRACT CNIC =====
-  // Look for CNIC in holder of CNIC row
-  const cnicPatterns = [
-    /holder of CNIC No\.<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
-    /CNIC No\.<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
-    /holder of CNIC.*?<td[^>]*>([^<]+)<\/td>/i,
-    /(\d{5}[-]?\d{7}[-]?\d{1})/
-  ];
-
-  for (const pattern of cnicPatterns) {
-    const match = html.match(pattern);
-    if (match && match[1]) {
-      let cnic = match[1].trim().replace(/[^\d]/g, '');
-      if (cnic.length === 13 && cnic !== '0000000000000') {
-        result.record.cnic = cnic;
-        break;
-      }
-    }
-  }
-
-  // ===== EXTRACT ADDRESS =====
-  // First try: Look for address after name in table
+  // 2. Extract Address (row after name)
   if (result.record.name) {
-    // Find the row after name
-    const nameRegex = new RegExp(`deducted\\/collected from[^<]*<td[^>]*>${escapeRegex(result.record.name)}<\\/td>`, 'i');
-    const nameMatch = html.match(nameRegex);
+    // Find the address row which comes after name
+    const addressPattern = new RegExp(`<td[^>]*colspan="3"[^>]*>${escapeRegex(result.record.name)}<\\/td>[\\s\\S]*?<tr[^>]*>[\\s\\S]*?<td[^>]*colspan="[^"]*"[^>]*>([^<]+)<\\/td>`, 'i');
+    const addressMatch = html.match(addressPattern);
     
-    if (nameMatch) {
-      const afterName = html.substring(nameMatch.index + nameMatch[0].length);
-      
-      // Look for the next table row with content
-      const rowRegex = /<tr[^>]*>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/gi;
-      const rows = afterName.match(rowRegex);
-      
-      if (rows && rows.length > 0) {
-        for (const row of rows) {
-          const cellMatch = row.match(/<td[^>]*>([^<]+)<\/td>/);
-          if (cellMatch && cellMatch[1]) {
-            const text = cellMatch[1].trim();
-            // Check if this looks like an address (not empty, not just dots, not CNIC)
-            if (text && text !== '.' && !/^\d{13}$/.test(text.replace(/\D/g, '')) && 
-                text.length > 10 && !text.includes('border-bottom')) {
-              result.record.address = cleanTextContent(text);
-              break;
-            }
-          }
-        }
+    if (addressMatch && addressMatch[1]) {
+      const address = addressMatch[1].trim();
+      // Check if it's a valid address (not empty, not just dots)
+      if (address && address !== '.' && !address.includes('border-bottom') && address.length > 10) {
+        result.record.address = cleanTextContent(address);
       }
     }
   }
 
-  // Second try: Direct extraction from specific pattern
+  // Alternative address extraction
   if (!result.record.address) {
-    const addressPatterns = [
-      /<td[^>]*>LACHMAN[^<]+<\/td>/i,
-      /<td[^>]*>([A-Z][A-Z\s]+(?:POST OFFICE|TEHSIL|ZILAH|DISTRICT)[^<]+)<\/td>/i,
-      /<td[^>]*>([A-Z][A-Z\s]{20,})<\/td>/
-    ];
-
-    for (const pattern of addressPatterns) {
-      const match = html.match(pattern);
-      if (match && match[1]) {
-        const address = match[1].trim();
-        if (address && address.length > 15) {
-          result.record.address = cleanTextContent(address);
-          break;
-        }
+    // Look for LACHMAN WALA pattern (from your example)
+    const addressPattern2 = /<td[^>]*colspan="3"[^>]*>([A-Z\s]+POST OFFICE[^<]+)<\/td>/i;
+    const addressMatch2 = html.match(addressPattern2);
+    if (addressMatch2 && addressMatch2[1]) {
+      const address = addressMatch2[1].trim();
+      if (address && address.length > 10) {
+        result.record.address = cleanTextContent(address);
       }
     }
   }
 
-  // Clean address from unwanted prefixes
+  // 3. Extract CNIC
+  const cnicPattern = /holder of CNIC No\.<\/td>\s*<td[^>]*colspan="2"[^>]*>\s*([^<]+)<\/td>/i;
+  const cnicMatch = html.match(cnicPattern);
+  
+  if (cnicMatch && cnicMatch[1]) {
+    const cnic = cnicMatch[1].trim().replace(/[^\d]/g, '');
+    if (cnic.length === 13 && cnic !== '0000000000000') {
+      result.record.cnic = cnic;
+    }
+  }
+
+  // Alternative CNIC extraction
+  if (!result.record.cnic) {
+    const cnicPattern2 = /(\d{5}-\d{7}-\d{1})/;
+    const cnicMatch2 = html.match(cnicPattern2);
+    if (cnicMatch2 && cnicMatch2[1]) {
+      const cnic = cnicMatch2[1].replace(/-/g, '');
+      if (cnic.length === 13) {
+        result.record.cnic = cnic;
+      }
+    }
+  }
+
+  // ===== FALLBACK: TEXT EXTRACTION =====
+  if (!result.record.name || !result.record.address) {
+    // Clean HTML to text
+    let cleanText = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    
+    const upperText = cleanText.toUpperCase();
+    
+    // Extract name
+    if (!result.record.name) {
+      const nameRegex = /HAS BEEN\s+([A-Z][A-Z\s]+?)\s+DEDUCTED\/COLLECTED FROM/i;
+      const nameMatchText = upperText.match(nameRegex);
+      if (nameMatchText && nameMatchText[1]) {
+        result.record.name = cleanTextContent(nameMatchText[1]);
+      }
+    }
+    
+    // Extract address
+    if (!result.record.address && result.record.name) {
+      const nameIndex = upperText.indexOf(result.record.name);
+      if (nameIndex !== -1) {
+        const afterName = upperText.substring(nameIndex + result.record.name.length);
+        const addressMatchText = afterName.match(/DEDUCTED\/COLLECTED FROM\s+([A-Z\s.,]+?)(?=\s+(?:HAVING|HOLDER|CNIC|ON\s+))/i);
+        if (addressMatchText && addressMatchText[1]) {
+          result.record.address = cleanTextContent(addressMatchText[1]);
+        }
+      }
+    }
+    
+    // Extract CNIC
+    if (!result.record.cnic) {
+      const cnicMatchText = upperText.match(/(\d{5}-\d{7}-\d{1})/);
+      if (cnicMatchText && cnicMatchText[1]) {
+        result.record.cnic = cnicMatchText[1].replace(/-/g, '');
+      }
+    }
+  }
+
+  // ===== FINAL CLEANUP =====
+  // Remove "DEDUCTED COLLECTED FROM" from address if present
   if (result.record.address) {
     result.record.address = result.record.address
       .replace(/^(?:DEDUCTED|COLLECTED|FROM)\s*/gi, '')
@@ -267,11 +297,11 @@ function extractTelenorData(html, phoneNumber) {
 // ========== HELPER FUNCTIONS ==========
 function cleanTextContent(text) {
   return text
-    .replace(/<[^>]*>/g, ' ')  // Remove HTML tags
-    .replace(/&nbsp;/g, ' ')   // Remove &nbsp;
-    .replace(/[^\w\s.,\-]/gi, ' ')  // Keep only letters, numbers, spaces, dots, commas and hyphens
-    .replace(/\s+/g, ' ')      // Remove extra spaces
-    .replace(/\.{2,}/g, ' ')   // Remove multiple dots
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/[^\w\s.,\-]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\.{2,}/g, ' ')
     .trim();
 }
 
