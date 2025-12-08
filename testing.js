@@ -22,7 +22,7 @@ export default {
         return new Response(JSON.stringify({
           success: false,
           error: 'Not found',
-          message: 'Use Telenor mobile number starting with 0344, 0345, 0346, 0347'
+          message: 'Use mobile number in format: 03451234567 or 923451234567'
         }, null, 2), {
           status: 404,
           headers: { 'Content-Type': 'application/json' }
@@ -35,7 +35,7 @@ export default {
         return Response.json({
           success: false,
           error: 'Phone number is required',
-          message: 'Use Telenor mobile number starting with 03'
+          message: 'Enter mobile number starting with 03 or 92'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
@@ -51,19 +51,36 @@ export default {
         phoneNumber = '0' + cleanedNum;
       }
 
-      // Validate Telenor number ONLY (0344, 0345, 0346, 0347)
-      if (!/^03[4-7]\d{8}$/.test(phoneNumber)) {
+      // ALLOW ALL TYPES OF NUMBERS - NO RESTRICTION HERE
+      // Just validate it's a proper Pakistani mobile number format
+      if (!/^03\d{9}$/.test(phoneNumber)) {
         return Response.json({
           success: false,
-          error: 'Invalid Telenor mobile number',
-          message: 'Only Telenor numbers are supported: 0344, 0345, 0346, 0347'
+          error: 'Invalid mobile number format',
+          message: 'Please enter valid Pakistani mobile number (03451234567 or 923451234567)'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      // Fetch data
+      // Check if it's Telenor number (0344-0347)
+      // If not Telenor, return appropriate message
+      if (!/^03[4-7]\d{8}$/.test(phoneNumber)) {
+        return Response.json({
+          success: true,
+          phone: phoneNumber,
+          data: null,
+          message: 'This is not a Telenor number. Only Telenor numbers (0344, 0345, 0346, 0347) are supported for data lookup.'
+        }, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
+      }
+
+      // Fetch data only for Telenor numbers
       const data = await fetchTelenorData(phoneNumber);
       
       // Return response
@@ -137,7 +154,7 @@ function extractTelenorData(html, phoneNumber) {
       (html.includes('Sorry') && html.includes('found'))) {
     return {
       success: false,
-      message: 'No Telenor record found for this number'
+      message: 'No record found for this Telenor number'
     };
   }
 
@@ -146,9 +163,10 @@ function extractTelenorData(html, phoneNumber) {
     record: {
       mobile: phoneNumber,
       name: '',
+      cnic: '',
       address: '',
       network: 'Telenor',
-      developer: 'Haseeb Sahil' // Developer field added
+      developer: 'Haseeb Sahil'
     },
     message: 'Telenor data retrieved successfully'
   };
@@ -166,12 +184,31 @@ function extractTelenorData(html, phoneNumber) {
   const upperText = cleanText.toUpperCase();
 
   // ===== EXTRACT NAME =====
-  // Look for name in Telenor certificate format
-  const nameRegex = /HAS BEEN\s+([A-Z][A-Z\s]+?)\s+(?:DEDUCTED|COLLECTED|FROM)/i;
+  const nameRegex = /HAS BEEN\s+([A-Z][A-Z\s]+?)(?:\s+(?:DEDUCTED|COLLECTED|FROM|HAVING|HOLDER|CNIC|ON))?/i;
   const nameMatch = upperText.match(nameRegex);
   
   if (nameMatch && nameMatch[1]) {
     result.record.name = cleanTextContent(nameMatch[1]);
+  }
+
+  // ===== EXTRACT CNIC =====
+  // Look for CNIC in various formats
+  const cnicRegexes = [
+    /CNIC\s*[:-\s]*(\d{5}[-]?\d{7}[-]?\d{1})/i,
+    /(\d{5}[-]?\d{7}[-]?\d{1})/,
+    /NIC\s*[:-\s]*(\d{13})/i,
+    /IDENTITY\s*[:-\s]*(\d{5}[-]?\d{7}[-]?\d{1})/i
+  ];
+
+  for (const regex of cnicRegexes) {
+    const cnicMatch = upperText.match(regex);
+    if (cnicMatch && cnicMatch[1]) {
+      let cnic = cnicMatch[1].replace(/-/g, '');
+      if (cnic.length === 13) {
+        result.record.cnic = cnic;
+        break;
+      }
+    }
   }
 
   // ===== EXTRACT ADDRESS =====
@@ -180,29 +217,33 @@ function extractTelenorData(html, phoneNumber) {
     if (nameIndex !== -1) {
       const textAfterName = upperText.substring(nameIndex + result.record.name.length);
       
-      // Find address ending
-      const endMarkers = ['HAVING NTN', 'HOLDER OF CNIC', 'CNIC', 'ON 00'];
+      // Remove DEDUCTED, COLLECTED, FROM from beginning
+      let addressText = textAfterName.replace(/^(?:\s*(?:DEDUCTED|COLLECTED|FROM))+\s*/i, '');
+      
+      // Find address ending markers
+      const endMarkers = ['HAVING NTN', 'HOLDER OF CNIC', 'CNIC', 'ON 00', 'NIC', 'IDENTITY'];
       let endIndex = -1;
       
       for (const marker of endMarkers) {
-        const index = textAfterName.indexOf(marker);
+        const index = addressText.indexOf(marker);
         if (index !== -1 && (endIndex === -1 || index < endIndex)) {
           endIndex = index;
         }
       }
       
       if (endIndex === -1) {
-        endIndex = Math.min(200, textAfterName.length);
+        endIndex = Math.min(200, addressText.length);
       }
       
       if (endIndex > 0) {
-        result.record.address = cleanTextContent(textAfterName.substring(0, endIndex));
+        const rawAddress = addressText.substring(0, endIndex);
+        result.record.address = cleanTextContent(rawAddress);
       }
     }
   }
 
   // ===== FINAL VALIDATION =====
-  if (!result.record.name && !result.record.address) {
+  if (!result.record.name && !result.record.address && !result.record.cnic) {
     return {
       success: false,
       message: 'No valid Telenor data found'
@@ -215,7 +256,7 @@ function extractTelenorData(html, phoneNumber) {
 // ========== HELPER FUNCTIONS ==========
 function cleanTextContent(text) {
   return text
-    .replace(/[^A-Z\s.,]/g, ' ')  // Keep only letters, spaces, dots and commas
+    .replace(/[^A-Z\s.,\-]/gi, ' ')  // Keep letters, spaces, dots, commas and hyphens
     .replace(/\s+/g, ' ')         // Remove extra spaces
     .replace(/\.{2,}/g, ' ')      // Remove multiple dots
     .trim();
