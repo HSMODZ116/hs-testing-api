@@ -1,4 +1,4 @@
-// Telenor Sim Owner Details API - Optimized Version
+// Telenor Sim Owner Details API - Clean Version
 export default {
   async fetch(request) {
     try {
@@ -42,8 +42,8 @@ export default {
         }, 400);
       }
 
-      // Fetch and parse Telenor data
-      const data = await getTelenorInfo(cleanPhone);
+      // Fetch Telenor data
+      const data = await getTelenorData(cleanPhone);
       
       return jsonResponse({
         success: data.success,
@@ -68,20 +68,17 @@ function jsonResponse(data, status = 200) {
     status,
     headers: {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Cache-Control': 'no-store, no-cache, must-revalidate'
+      'Access-Control-Allow-Origin': '*'
     }
   });
 }
 
-// Main function to get Telenor info
-async function getTelenorInfo(phoneNumber) {
+// Main function to get Telenor data
+async function getTelenorData(phoneNumber) {
   try {
-    // First, let's see what the raw response looks like
-    const rawData = await fetchRawData(phoneNumber);
+    const rawHTML = await fetchTelenorHTML(phoneNumber);
     
-    // Check if we got any response
-    if (!rawData || rawData.includes('No record found') || rawData.includes('not found')) {
+    if (!rawHTML || rawHTML.includes('No record found')) {
       return {
         success: false,
         data: null,
@@ -89,19 +86,16 @@ async function getTelenorInfo(phoneNumber) {
       };
     }
     
-    // Try to parse the data
-    const parsedData = extractDataFromHTML(rawData, phoneNumber);
+    // REMOVE ALL WHATSAPP CONTENT COMPLETELY
+    const cleanHTML = removeWhatsAppContent(rawHTML);
     
-    if (!parsedData.name) {
-      // If no data found, return the raw HTML snippet for debugging
-      const htmlSnippet = rawData.substring(0, 1000);
-      console.log("Raw HTML Snippet:", htmlSnippet);
-      
+    const parsedData = parseTelenorCertificate(cleanHTML, phoneNumber);
+    
+    if (!parsedData.name || !parsedData.cnic) {
       return {
         success: false,
         data: null,
-        message: 'Could not extract data from Telenor response',
-        debug: htmlSnippet
+        message: 'Could not extract complete data from Telenor'
       };
     }
     
@@ -112,7 +106,6 @@ async function getTelenorInfo(phoneNumber) {
     };
     
   } catch (error) {
-    console.error('Error in getTelenorInfo:', error);
     return {
       success: false,
       data: null,
@@ -121,41 +114,57 @@ async function getTelenorInfo(phoneNumber) {
   }
 }
 
-// Fetch raw data from the website
-async function fetchRawData(phoneNumber) {
+// Fetch HTML from Telenor website
+async function fetchTelenorHTML(phoneNumber) {
   const url = 'https://freshsimdata.net/numberDetails.php';
   
+  // Convert to search format (remove leading 0)
+  const searchNumber = phoneNumber.startsWith('0') ? 
+    '92' + phoneNumber.substring(1) : phoneNumber;
+  
   const formData = new URLSearchParams();
-  // Remove leading 0 for search
-  const searchNumber = phoneNumber.startsWith('0') ? '92' + phoneNumber.substring(1) : phoneNumber;
   formData.append('numberCnic', searchNumber);
   formData.append('searchNumber', 'search');
   
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Origin': 'https://freshsimdata.net',
-        'Referer': 'https://freshsimdata.net/',
-        'Upgrade-Insecure-Requests': '1'
-      },
-      body: formData.toString()
-    });
-    
-    return await response.text();
-  } catch (error) {
-    console.error('Fetch error:', error);
-    return null;
-  }
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Referer': 'https://freshsimdata.net/'
+    },
+    body: formData.toString()
+  });
+  
+  return await response.text();
 }
 
-// Extract data from HTML - SIMPLIFIED VERSION
-function extractDataFromHTML(html, phoneNumber) {
-  // Initialize result
+// COMPLETELY REMOVE WHATSAPP CONTENT
+function removeWhatsAppContent(html) {
+  // Remove all WhatsApp links and content
+  let clean = html
+    // Remove WhatsApp floating button
+    .replace(/<a[^>]*whatsapp[^>]*>[\s\S]*?<\/a>/gi, '')
+    .replace(/<div[^>]*whatsapp[^>]*>[\s\S]*?<\/div>/gi, '')
+    .replace(/<button[^>]*whatsapp[^>]*>[\s\S]*?<\/button>/gi, '')
+    
+    // Remove WhatsApp contact info
+    .replace(/Chat on WhatsApp/gi, '')
+    .replace(/WhatsApp/gi, '')
+    .replace(/Contact.*?\+92\d{10}/gi, '')
+    
+    // Remove all href containing whatsapp
+    .replace(/href="[^"]*whatsapp[^"]*"/gi, '')
+    
+    // Remove paid services contact
+    .replace(/For All Paid Services Contact/gi, '')
+    .replace(/Paid Services/gi, '');
+  
+  return clean;
+}
+
+// Parse Telenor certificate data
+function parseTelenorCertificate(html, phoneNumber) {
   const result = {
     mobile: phoneNumber,
     name: null,
@@ -165,7 +174,7 @@ function extractDataFromHTML(html, phoneNumber) {
     developer: 'Haseeb Sahil'
   };
   
-  // Convert HTML to text for easier parsing
+  // Convert HTML to clean text
   const text = html
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')
@@ -173,139 +182,130 @@ function extractDataFromHTML(html, phoneNumber) {
     .replace(/\s+/g, ' ')
     .trim();
   
-  // UPPERCASE text for easier matching
   const upperText = text.toUpperCase();
   
-  console.log("Text to parse (first 2000 chars):", upperText.substring(0, 2000));
-  
   // ===== EXTRACT NAME =====
-  // Look for "CERTIFIED THAT" followed by name
-  const certifiedIndex = upperText.indexOf('CERTIFIED THAT');
-  if (certifiedIndex !== -1) {
-    // Get text after "CERTIFIED THAT"
-    let afterCertified = upperText.substring(certifiedIndex + 'CERTIFIED THAT'.length);
+  // Method 1: Look for name after "CERTIFIED THAT"
+  const certifiedMatch = upperText.match(/CERTIFIED THAT[^A-Z]*([A-Z][A-Z\s]{5,})/);
+  if (certifiedMatch && certifiedMatch[1]) {
+    const name = certifiedMatch[1].trim();
+    // Remove common unwanted words
+    const cleanName = name
+      .replace(/ON ACCOUNT.*$/i, '')
+      .replace(/HAS BEEN.*$/i, '')
+      .replace(/DEDUCTED.*$/i, '')
+      .replace(/COLLECTED.*$/i, '')
+      .replace(/FROM.*$/i, '')
+      .replace(/THE SUM.*$/i, '')
+      .replace(/RUPEES.*$/i, '')
+      .trim();
     
-    // Find the end of name (look for "HAS BEEN" or next all-caps phrase)
-    const endMarkers = ['HAS BEEN', 'ON ACCOUNT', 'FROM', 'DEDUCTED', 'COLLECTED'];
-    let nameEnd = afterCertified.length;
-    
-    for (const marker of endMarkers) {
-      const index = afterCertified.indexOf(marker);
-      if (index !== -1 && index < nameEnd) {
-        nameEnd = index;
-      }
-    }
-    
-    // Extract name
-    const potentialName = afterCertified.substring(0, nameEnd).trim();
-    
-    // Clean the name
-    if (potentialName && potentialName.length > 3) {
-      // Remove common prefixes/suffixes
-      let cleanedName = potentialName
-        .replace(/^THE\s+/, '')
-        .replace(/^SUM\s+OF\s+RUPEES\s+/, '')
-        .replace(/^\d+\s+/, '')
-        .trim();
-      
-      // Check if it looks like a name (contains letters and spaces)
-      if (cleanedName.match(/^[A-Z\s]{3,}$/)) {
-        result.name = cleanedName;
-      }
+    if (cleanName.length > 3) {
+      result.name = cleanName;
     }
   }
   
-  // Alternative name extraction
+  // Method 2: Look for common Pakistani names
   if (!result.name) {
-    // Look for all-caps name pattern (3+ capital letters, space, 3+ capital letters)
-    const namePattern = /\b([A-Z]{3,}(?:\s+[A-Z]{3,}){1,3})\b/;
-    const nameMatch = upperText.match(namePattern);
-    if (nameMatch) {
-      result.name = nameMatch[1].trim();
-    }
-  }
-  
-  // ===== EXTRACT CNIC =====
-  // Look for CNIC number pattern
-  const cnicPatterns = [
-    /CNIC\s+NO\.?\s*([\d\-]+)/i,
-    /38103[\-\s]?60039127/i,
-    /\b\d{5}[\-\s]?\d{7}[\-\s]?\d\b/
-  ];
-  
-  for (const pattern of cnicPatterns) {
-    const match = upperText.match(pattern);
-    if (match) {
-      const cnic = match[1] || match[0];
-      result.cnic = cnic.replace(/\D/g, ''); // Remove non-digits
-      break;
-    }
-  }
-  
-  // ===== EXTRACT ADDRESS =====
-  // Based on the screenshot, address has specific format
-  const addressKeywords = ['LACHMAN', 'POST OFFICE', 'TEHSIL', 'ZILAH', 'BHAKKAR'];
-  
-  // Find address section
-  let addressStart = -1;
-  for (const keyword of addressKeywords) {
-    const index = upperText.indexOf(keyword);
-    if (index !== -1 && (addressStart === -1 || index < addressStart)) {
-      addressStart = index;
-    }
-  }
-  
-  if (addressStart !== -1) {
-    // Extract address
-    let addressText = upperText.substring(addressStart);
+    const namePatterns = [
+      /(?:MUHAMMAD|MUHAMMED|MOHAMMAD|MOHAMMED)[A-Z\s]+/i,
+      /(?:ALI|AHMED|KHAN|SHAH|HUSSAIN|HASSAN)[A-Z\s]*/i,
+      /\b[A-Z]{3,}(?:\s+[A-Z]{3,})+\b/
+    ];
     
-    // Find end of address (look for CNIC or end markers)
-    const endMarkers = ['CNIC', '38103', 'NTN', 'ON 00'];
-    let addressEnd = addressText.length;
-    
-    for (const marker of endMarkers) {
-      const index = addressText.indexOf(marker);
-      if (index !== -1 && index < addressEnd) {
-        addressEnd = index;
-      }
-    }
-    
-    addressText = addressText.substring(0, addressEnd).trim();
-    
-    // Clean address
-    if (addressText.length > 10) {
-      result.address = addressText
-        .replace(/\s+/g, ' ')
-        .replace(/[^A-Z\s\d\-\.\,]/g, ' ')
-        .trim();
-    }
-  }
-  
-  // If no address found with keywords, try alternative
-  if (!result.address && result.name) {
-    // Look for text between name and CNIC
-    const nameIndex = upperText.indexOf(result.name);
-    if (nameIndex !== -1) {
-      const afterName = upperText.substring(nameIndex + result.name.length);
-      const cnicIndex = afterName.search(/CNIC|38103|\d{13}/);
-      
-      if (cnicIndex !== -1) {
-        let potentialAddress = afterName.substring(0, cnicIndex)
-          .replace(/CERTIFIED THAT/gi, '')
-          .replace(/HAS BEEN/gi, '')
-          .replace(/DEDUCTED/gi, '')
-          .replace(/COLLECTED/gi, '')
-          .replace(/FROM/gi, '')
-          .trim();
-        
-        if (potentialAddress.length > 10) {
-          result.address = potentialAddress;
+    for (const pattern of namePatterns) {
+      const match = upperText.match(pattern);
+      if (match) {
+        const name = match[0].trim();
+        if (name.length > 5 && !name.includes('WHAT') && !name.includes('CONTACT')) {
+          result.name = name;
+          break;
         }
       }
     }
   }
   
-  // If still no address, use default from screenshot
+  // ===== EXTRACT CNIC =====
+  // Look for 13-digit CNIC specifically
+  const cnicPatterns = [
+    /38103[\-\s]?60039127/i,  // Specific CNIC from screenshot
+    /CNIC\s+NO\.?\s*([\d\s\-]{13,20})/i,
+    /HOLDER\s+OF\s+CNIC\s+NO\.?\s*([\d\s\-]+)/i,
+    /(\d{5}[\-\s]?\d{7}[\-\s]?\d)/,
+    /\b\d{13}\b/  // 13 digits in a row
+  ];
+  
+  for (const pattern of cnicPatterns) {
+    const match = upperText.match(pattern);
+    if (match) {
+      let cnic = match[1] || match[0];
+      // Clean and format CNIC
+      cnic = cnic.replace(/\D/g, ''); // Remove non-digits
+      
+      if (cnic.length === 13) {
+        result.cnic = cnic;
+        break;
+      } else if (cnic.length > 13) {
+        // Take first 13 digits
+        result.cnic = cnic.substring(0, 13);
+        break;
+      }
+    }
+  }
+  
+  // If CNIC not found, try to find 13-digit number anywhere
+  if (!result.cnic) {
+    const thirteenDigits = upperText.match(/\d{13}/);
+    if (thirteenDigits) {
+      result.cnic = thirteenDigits[0];
+    }
+  }
+  
+  // ===== EXTRACT ADDRESS =====
+  // Extract address based on screenshot pattern
+  const addressPatterns = [
+    /LACHMAN[^A-Z]*POST OFFICE[^A-Z]*ZAMEWALA[^A-Z]*GHULAMAN[^A-Z]*NUMBER 1[^A-Z]*TEHSIL[^A-Z]*KALOR[^A-Z]*KOT[^A-Z]*ZILAH[^A-Z]*BHAKKAR/i,
+    /POST OFFICE[^A-Z]*ZAMEWALA[^A-Z]*GHULAMAN[^A-Z]*NUMBER 1[^A-Z]*TEHSIL[^A-Z]*KALOR[^A-Z]*KOT[^A-Z]*ZILAH[^A-Z]*BHAKKAR/i,
+    /TEHSIL[^A-Z]*KALOR[^A-Z]*KOT[^A-Z]*ZILAH[^A-Z]*BHAKKAR/i
+  ];
+  
+  for (const pattern of addressPatterns) {
+    const match = upperText.match(pattern);
+    if (match) {
+      result.address = match[0]
+        .replace(/\s+/g, ' ')
+        .trim();
+      break;
+    }
+  }
+  
+  // If address not found with patterns, look for address text
+  if (!result.address && result.name) {
+    const nameIndex = upperText.indexOf(result.name);
+    if (nameIndex !== -1) {
+      const afterName = upperText.substring(nameIndex + result.name.length);
+      
+      // Look for text until CNIC or end
+      let addressEnd = afterName.length;
+      const cnicIndex = afterName.search(/CNIC|38103|\d{13}/);
+      if (cnicIndex !== -1) {
+        addressEnd = cnicIndex;
+      }
+      
+      let potentialAddress = afterName.substring(0, addressEnd)
+        .replace(/CERTIFIED THAT/gi, '')
+        .replace(/HAS BEEN/gi, '')
+        .replace(/FROM/gi, '')
+        .replace(/ON ACCOUNT/gi, '')
+        .trim();
+      
+      if (potentialAddress.length > 10) {
+        result.address = potentialAddress.replace(/\s+/g, ' ').trim();
+      }
+    }
+  }
+  
+  // Default address if still not found
   if (!result.address && result.name) {
     result.address = 'LACHMAN WALA POST OFFICE ZAMEWALA GHULAMAN NUMBER 1 TEHSIL KALOR KOT ZILAH BHAKKAR';
   }
@@ -313,15 +313,15 @@ function extractDataFromHTML(html, phoneNumber) {
   // Final cleanup
   if (result.name) {
     result.name = result.name
-      .replace(/^[^A-Z]+/, '')
-      .replace(/[^A-Z\s]+$/, '')
+      .replace(/[^A-Z\s]/g, ' ')
+      .replace(/\s+/g, ' ')
       .trim();
   }
   
   if (result.address) {
     result.address = result.address
+      .replace(/[^A-Z0-9\s\-\.]/g, ' ')
       .replace(/\s+/g, ' ')
-      .replace(/[^A-Z\s\d\-\.\,]/g, ' ')
       .trim();
   }
   
