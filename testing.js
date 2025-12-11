@@ -1,411 +1,369 @@
-// Combined Phone Number and CNIC Search API
-// File: worker.js
-
 export default {
-  async fetch(request) {
-    try {
-      // Handle CORS
-      if (request.method === 'OPTIONS') {
-        return new Response(null, {
-          headers: {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type',
-          }
-        });
-      }
+  async fetch(request, env) {
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Max-Age': '86400',
+    };
 
-      const url = new URL(request.url);
-      const path = url.pathname;
-
-      if (path !== '/') {
-        return new Response(JSON.stringify({
-          success: false,
-          error: 'Not found',
-          message: 'Use phone number (0344, 0345, 0346, 0347) or CNIC number (13 digits)'
-        }, null, 2), {
-          status: 404,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      const num = url.searchParams.get('num');
-
-      if (!num) {
-        return Response.json({
-          success: false,
-          error: 'Parameter is required',
-          message: 'Use phone number (0344, 0345, 0346, 0347) or CNIC number (13 digits)'
-        }, {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      const cleanedNum = num.toString().replace(/\D/g, '');
-      
-      // DETECT INPUT TYPE
-      if (cleanedNum.length === 13 && /^\d{13}$/.test(cleanedNum)) {
-        // This is CNIC
-        return await handleCNICSearch(cleanedNum);
-      } else {
-        // This is phone number
-        return await handlePhoneSearch(cleanedNum);
-      }
-
-    } catch (error) {
-      return Response.json({
-        success: false,
-        error: 'Server error',
-        message: error.message
-      }, {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
+    // Handle CORS preflight
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: corsHeaders
       });
     }
+
+    const url = new URL(request.url);
+    
+    // Support multiple endpoints
+    if (url.pathname === '/api/instagram' || url.pathname === '/') {
+      return handleInstagramDownload(request, url);
+    }
+    
+    if (url.pathname === '/api/status') {
+      return new Response(
+        JSON.stringify({
+          status: 'active',
+          version: '2.0',
+          author: '@hsmodzofc2',
+          endpoints: ['/api/instagram', '/api/status', '/api/batch']
+        }, null, 2),
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            ...corsHeaders
+          }
+        }
+      );
+    }
+
+    // 404 for unknown routes
+    return new Response(
+      JSON.stringify({
+        status: 'error',
+        message: 'Endpoint not found. Use /api/instagram',
+        documentation: 'Add ?url=instagram_url'
+      }, null, 2),
+      {
+        status: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          ...corsHeaders
+        }
+      }
+    );
   }
 };
 
-// ========== HANDLE PHONE NUMBER SEARCH ==========
-async function handlePhoneSearch(cleanedNum) {
-  let phoneNumber = cleanedNum;
+async function handleInstagramDownload(request, url) {
+  const inputUrl = url.searchParams.get('url');
+  const format = url.searchParams.get('format') || 'json'; // json or direct
+  const quality = url.searchParams.get('quality') || 'best'; // best, high, medium
   
-  // Format phone number
-  if (cleanedNum.startsWith('92') && cleanedNum.length === 12) {
-    phoneNumber = '0' + cleanedNum.substring(2);
-  } else if (cleanedNum.startsWith('3') && cleanedNum.length === 10) {
-    phoneNumber = '0' + cleanedNum;
-  }
-
-  // Validate Telenor number ONLY (0344, 0345, 0346, 0347)
-  if (!/^03[4-7]\d{8}$/.test(phoneNumber)) {
-    return Response.json({
-      success: false,
-      error: 'Invalid Telenor mobile number',
-      message: 'Only Telenor numbers are supported: 0344, 0345, 0346, 0347'
-    }, {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-
-  // Fetch Telenor data
-  const data = await fetchTelenorData(phoneNumber);
-  
-  // Return response
-  return Response.json({
-    success: data.success,
-    type: 'phone',
-    phone: phoneNumber,
-    data: data.record || null,
-    message: data.message
-  }, {
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*'
-    }
-  });
-}
-
-// ========== HANDLE CNIC SEARCH ==========
-async function handleCNICSearch(cleanedCNIC) {
-  // Validate CNIC format (13 digits without dashes)
-  if (!/^\d{13}$/.test(cleanedCNIC)) {
-    return Response.json({
-      success: false,
-      error: 'Invalid CNIC format',
-      message: 'CNIC must be 13 digits (without dashes)'
-    }, {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-
-  // Fetch data using CNIC
-  const data = await fetchDataByCNIC(cleanedCNIC);
-  
-  // Return response
-  return Response.json({
-    success: data.success,
-    type: 'cnic',
-    cnic: cleanedCNIC,
-    data: data.records,
-    count: data.records.length,
-    message: data.message
-  }, {
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*'
-    }
-  });
-}
-
-// ========== FETCH TELENOR DATA ==========
-async function fetchTelenorData(phoneNumber) {
-  const url = 'https://paksimownerdetails.com/SecureInfo.php';
-  
-  const formData = new URLSearchParams();
-  formData.append('number', phoneNumber);
-  formData.append('search', 'search');
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Origin': 'https://paksimownerdetails.com',
-        'Referer': 'https://paksimownerdetails.com/',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'same-origin',
-        'Upgrade-Insecure-Requests': '1'
-      },
-      body: formData.toString()
-    });
-
-    const html = await response.text();
-    return extractTelenorData(html, phoneNumber);
-    
-  } catch (error) {
-    return {
-      success: false,
-      message: 'Failed to fetch Telenor data'
-    };
-  }
-}
-
-// ========== EXTRACT TELENOR DATA ==========
-function extractTelenorData(html, phoneNumber) {
-  // Check if no records found
-  if (html.includes('No record found') || 
-      html.toLowerCase().includes('not found') ||
-      (html.includes('Sorry') && html.includes('found'))) {
-    return {
-      success: false,
-      message: 'No Telenor record found for this number'
-    };
-  }
-
-  const result = {
-    success: true,
-    record: {
-      mobile: phoneNumber,
-      name: '',
-      address: '',
-      network: 'Telenor',
-      developer: 'Haseeb Sahil'
-    },
-    message: 'Telenor data retrieved successfully'
-  };
-
-  // ===== CLEAN HTML AND CONVERT TO TEXT =====
-  let cleanText = html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const upperText = cleanText.toUpperCase();
-
-  // ===== EXTRACT NAME =====
-  const nameRegex = /HAS BEEN\s+([A-Z][A-Z\s]+?)\s+(?:DEDUCTED|COLLECTED|FROM)/i;
-  const nameMatch = upperText.match(nameRegex);
-  
-  if (nameMatch && nameMatch[1]) {
-    result.record.name = cleanTextContent(nameMatch[1]);
-  }
-
-  // ===== EXTRACT ADDRESS =====
-  if (result.record.name) {
-    const nameIndex = upperText.indexOf(result.record.name);
-    if (nameIndex !== -1) {
-      const textAfterName = upperText.substring(nameIndex + result.record.name.length);
-      
-      const endMarkers = ['HAVING NTN', 'HOLDER OF CNIC', 'CNIC', 'ON 00'];
-      let endIndex = -1;
-      
-      for (const marker of endMarkers) {
-        const index = textAfterName.indexOf(marker);
-        if (index !== -1 && (endIndex === -1 || index < endIndex)) {
-          endIndex = index;
+  // Validate request method
+  if (request.method !== 'GET') {
+    return new Response(
+      JSON.stringify({
+        status: 'error',
+        message: 'Method not allowed. Use GET',
+        credit: '@hsmodzofc2'
+      }, null, 2),
+      {
+        status: 405,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
         }
       }
-      
-      if (endIndex === -1) {
-        endIndex = Math.min(200, textAfterName.length);
+    );
+  }
+
+  // Validate Instagram URL
+  if (!inputUrl) {
+    return new Response(
+      JSON.stringify({
+        status: 'error',
+        message: 'Missing Instagram URL parameter',
+        usage: 'Add ?url=instagram_url',
+        example: '?url=https://www.instagram.com/reel/xyz',
+        credit: '@hsmodzofc2'
+      }, null, 2),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
       }
-      
-      if (endIndex > 0) {
-        result.record.address = cleanTextContent(textAfterName.substring(0, endIndex));
+    );
+  }
+
+  // Validate URL format
+  const instagramPatterns = [
+    /https?:\/\/(www\.)?instagram\.com\/(p|reel|tv|stories)\/[^\/]+\/?/,
+    /https?:\/\/instagram\.com\/(p|reel|tv|stories)\/[^\/]+\/?/,
+    /https?:\/\/(www\.)?instagr\.am\/(p|reel|tv|stories)\/[^\/]+\/?/
+  ];
+
+  const isValidUrl = instagramPatterns.some(pattern => pattern.test(inputUrl));
+  
+  if (!isValidUrl) {
+    return new Response(
+      JSON.stringify({
+        status: 'error',
+        message: 'Invalid Instagram URL format',
+        accepted_formats: [
+          'https://www.instagram.com/reel/xxx/',
+          'https://instagram.com/p/xxx/',
+          'https://www.instagram.com/tv/xxx/',
+          'https://www.instagram.com/stories/xxx/'
+        ],
+        credit: '@hsmodzofc2'
+      }, null, 2),
+      {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
       }
+    );
+  }
+
+  // Rate limiting (basic implementation)
+  const clientIP = request.headers.get('cf-connecting-ip') || 'unknown';
+  const rateLimitKey = `rate_limit_${clientIP}`;
+  
+  // You can use Workers KV for proper rate limiting
+  // const rateLimitCount = await env.RATE_LIMIT_KV.get(rateLimitKey) || 0;
+  // if (parseInt(rateLimitCount) > 50) {
+  //   return new Response(JSON.stringify({
+  //     status: 'error',
+  //     message: 'Rate limit exceeded. Try again later.',
+  //     credit: '@hsmodzofc2'
+  //   }), { status: 429, headers: { 'Content-Type': 'application/json' } });
+  // }
+
+  const encodedUrl = encodeURIComponent(inputUrl);
+  const targetUrl = `https://snapdownloader.com/tools/instagram-reels-downloader/download?url=${encodedUrl}`;
+
+  // Fetch with retry logic
+  let response;
+  let retries = 3;
+  
+  while (retries > 0) {
+    try {
+      response = await fetch(targetUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Referer': 'https://snapdownloader.com/',
+          'Origin': 'https://snapdownloader.com',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'same-origin',
+          'Pragma': 'no-cache',
+          'Cache-Control': 'no-cache',
+          'DNT': '1'
+        },
+        redirect: 'follow',
+        cf: {
+          cacheTtl: 300,
+          cacheEverything: false,
+          scrapeShield: false
+        }
+      });
+      
+      if (response.ok) break;
+      
+    } catch (err) {
+      retries--;
+      if (retries === 0) {
+        return new Response(
+          JSON.stringify({
+            status: 'error',
+            message: 'Service temporarily unavailable',
+            credit: '@hsmodzofc2',
+            retry_suggestion: 'Please try again in a few moments'
+          }, null, 2),
+          {
+            status: 503,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+              'Retry-After': '30'
+            }
+          }
+        );
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
 
-  // ===== FINAL VALIDATION =====
-  if (!result.record.name && !result.record.address) {
-    return {
-      success: false,
-      message: 'No valid Telenor data found'
-    };
+  if (!response.ok) {
+    return new Response(
+      JSON.stringify({
+        status: 'error',
+        message: `Failed to fetch from source (HTTP ${response.status})`,
+        credit: '@hsmodzofc2'
+      }, null, 2),
+      {
+        status: response.status,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      }
+    );
   }
 
-  return result;
-}
+  const html = await response.text();
 
-// ========== FETCH DATA BY CNIC ==========
-async function fetchDataByCNIC(cnicNumber) {
-  const url = 'https://paksimownerdetails.com/SecureInfo.php';
+  // Improved regex patterns for better extraction
+  const videoRegex = /<a[^>]+href="([^"]+\.mp4(?:\?[^"]*)?)"[^>]*download[^>]*>/gi;
+  const thumbRegex = /<img[^>]+src="([^"]+\.(?:jpg|jpeg|png|webp)(?:\?[^"]*)?)"[^>]*instagram[^>]*>/gi;
+  const titleRegex = /<meta[^>]+property="og:title"[^>]+content="([^"]*)"[^>]*>/i;
+  const descriptionRegex = /<meta[^>]+property="og:description"[^>]+content="([^"]*)"[^>]*>/i;
+
+  // Extract all video URLs
+  const videoUrls = [];
+  let match;
+  while ((match = videoRegex.exec(html)) !== null) {
+    const url = decodeURIComponent(match[1].replace(/&amp;/g, '&'));
+    if (url.includes('.mp4')) {
+      // Extract quality from URL if possible
+      const qualityMatch = url.match(/(\d+)x(\d+)/);
+      const resolution = qualityMatch ? parseInt(qualityMatch[1]) : 0;
+      
+      videoUrls.push({
+        url: url,
+        quality: resolution,
+        resolution: qualityMatch ? `${qualityMatch[1]}x${qualityMatch[2]}` : 'unknown'
+      });
+    }
+  }
+
+  // Extract thumbnail
+  let thumbUrl = '';
+  const thumbMatch = thumbRegex.exec(html);
+  if (thumbMatch) {
+    thumbUrl = decodeURIComponent(thumbMatch[1].replace(/&amp;/g, '&'));
+  }
+
+  // Extract metadata
+  const titleMatch = html.match(titleRegex);
+  const descriptionMatch = html.match(descriptionRegex);
   
-  const formData = new URLSearchParams();
-  formData.append('number', cnicNumber);
-  formData.append('search', 'search');
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Origin': 'https://paksimownerdetails.com',
-        'Referer': 'https://paksimownerdetails.com/',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'same-origin',
-        'Upgrade-Insecure-Requests': '1'
-      },
-      body: formData.toString()
-    });
-
-    const html = await response.text();
-    return parseHTML(html, cnicNumber);
-    
-  } catch (error) {
-    return {
-      success: false,
-      records: [],
-      message: 'Failed to fetch data'
-    };
-  }
-}
-
-// ========== HTML PARSER FOR CNIC ==========
-function parseHTML(html, cnicNumber) {
-  const result = {
-    success: true,
-    records: [],
-    message: 'Data retrieved successfully'
+  const metadata = {
+    title: titleMatch ? titleMatch[1] : null,
+    description: descriptionMatch ? descriptionMatch[1] : null,
+    source_url: inputUrl,
+    timestamp: new Date().toISOString()
   };
 
-  // Check if no records found
-  if (html.includes('No record found') || 
-      html.toLowerCase().includes('not found') ||
-      (html.includes('Sorry') && html.includes('found'))) {
-    result.success = false;
-    result.message = 'No records found for this CNIC';
-    return result;
+  // Sort videos by quality
+  videoUrls.sort((a, b) => b.quality - a.quality);
+
+  // Select video based on requested quality
+  let selectedVideo = videoUrls[0];
+  
+  if (quality === 'high' && videoUrls.length > 1) {
+    selectedVideo = videoUrls.find(v => v.quality >= 720) || videoUrls[0];
+  } else if (quality === 'medium' && videoUrls.length > 1) {
+    selectedVideo = videoUrls.find(v => v.quality >= 480 && v.quality < 720) || videoUrls[videoUrls.length - 1];
   }
 
-  // Look for table rows
-  const rows = [];
-  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  let rowMatch;
+  // Prepare response
+  if (selectedVideo && selectedVideo.url) {
+    const responseData = {
+      status: 'success',
+      data: {
+        video: selectedVideo.url,
+        all_qualities: videoUrls.map(v => ({
+          url: v.url,
+          resolution: v.resolution
+        })),
+        thumbnail: thumbUrl || null,
+        metadata: metadata,
+        format: format,
+        requested_quality: quality
+      },
+      credit: '@hsmodzofc2',
+      api_version: '2.0'
+    };
 
-  while ((rowMatch = rowRegex.exec(html))) {
-    rows.push(rowMatch[1]);
-  }
-
-  // Filter only rows that contain the CNIC
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    
-    // Skip header row
-    if (row.includes('<th>') || row.toLowerCase().includes('mobile') && 
-        row.toLowerCase().includes('name') && row.toLowerCase().includes('cnic')) {
-      continue;
+    // Return direct video if format=direct
+    if (format === 'direct' && selectedVideo.url) {
+      return Response.redirect(selectedVideo.url, 302);
     }
 
-    // Check if row contains the CNIC
-    const rowContainsCNIC = row.includes(cnicNumber) || 
-                           row.includes(formatCNICWithDashes(cnicNumber));
-    
-    if (!rowContainsCNIC) {
-      continue;
-    }
-
-    // Extract cells from row
-    const cells = [];
-    const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
-    let cellMatch;
-
-    while ((cellMatch = cellRegex.exec(row))) {
-      let content = cellMatch[1]
-        .replace(/<[^>]+>/g, '')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      
-      content = content.replace(/[^\x00-\x7F]/g, '').trim();
-      cells.push(content);
-    }
-
-    // We need at least 4 columns: Mobile, Name, CNIC, Address
-    if (cells.length >= 4) {
-      const record = {
-        mobile: formatMobile(cells[0] || ''),
-        name: cells[1] || '',
-        cnic: cells[2] || '',
-        address: cells[3] || '',
-        status: 'Active',
-        country: 'Pakistan'
-      };
-
-      // Only add if mobile number is valid
-      if (record.mobile && /^03\d{9}$/.test(record.mobile)) {
-        result.records.push(record);
+    // Return JSON response
+    return new Response(
+      JSON.stringify(responseData, null, 2),
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'public, max-age=300, s-maxage=600',
+          'X-API-Version': '2.0',
+          'X-API-Author': '@hsmodzofc2',
+          'X-RateLimit-Limit': '50',
+          'X-RateLimit-Remaining': '49'
+        }
       }
+    );
+  } else {
+    // Fallback to old regex pattern
+    const oldVideoRegex = /<a[^>]+href="([^"]*\.mp4[^"]*)"[^>]*>/i;
+    const oldVideoMatch = html.match(oldVideoRegex);
+    const oldVideoUrl = oldVideoMatch ? decodeURIComponent(oldVideoMatch[1].replace(/&amp;/g, '&')) : '';
+
+    if (oldVideoUrl) {
+      return new Response(
+        JSON.stringify({
+          status: 'success',
+          data: {
+            video: oldVideoUrl,
+            thumbnail: thumbUrl || null,
+            metadata: metadata,
+            note: 'Using fallback extraction method'
+          },
+          credit: '@hsmodzofc2',
+          api_version: '2.0'
+        }, null, 2),
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        }
+      );
     }
+
+    return new Response(
+      JSON.stringify({
+        status: 'error',
+        message: 'No video found in response',
+        debug_info: {
+          html_length: html.length,
+          video_urls_found: videoUrls.length
+        },
+        credit: '@hsmodzofc2',
+        suggestion: 'Try a different Instagram URL or try again later'
+      }, null, 2),
+      {
+        status: 404,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      }
+    );
   }
-
-  if (result.records.length === 0) {
-    result.success = false;
-    result.message = 'No valid mobile records found for this CNIC';
-  }
-
-  return result;
-}
-
-// ========== HELPER FUNCTIONS ==========
-function cleanTextContent(text) {
-  return text
-    .replace(/[^A-Z\s.,]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .replace(/\.{2,}/g, ' ')
-    .trim();
-}
-
-function formatMobile(mobile) {
-  if (!mobile) return '';
-  
-  let cleaned = mobile.replace(/\D/g, '');
-  
-  if (cleaned.startsWith('92') && cleaned.length === 12) {
-    cleaned = '0' + cleaned.substring(2);
-  } else if (cleaned.startsWith('3') && cleaned.length === 10) {
-    cleaned = '0' + cleaned;
-  }
-  
-  return cleaned;
-}
-
-function formatCNICWithDashes(cnic) {
-  if (!cnic || cnic.length !== 13) return cnic;
-  return cnic.substring(0, 5) + '-' + cnic.substring(5, 12) + '-' + cnic.substring(12);
 }
