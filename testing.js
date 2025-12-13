@@ -1,128 +1,295 @@
-// Cloudflare Worker Rate-Limited Proxy
+/**
+ * Cloudflare Workers Image Prompt API
+ * Converts image URLs to AI-generated prompts using ImagePromptGuru API
+ * Made by Ashlynn Repository
+ */
+
+class ImagePromptAPI {
+  constructor() {
+    this.apiUrl = "https://api.imagepromptguru.net/image-to-prompt";
+    this.defaultHeaders = {
+      "accept": "*/*",
+      "accept-language": "en-US,en;q=0.9",
+      "cache-control": "no-cache",
+      "content-type": "application/json",
+      "origin": "https://imagepromptguru.net",
+      "pragma": "no-cache",
+      "priority": "u=1, i",
+      "referer": "https://imagepromptguru.net/",
+      "sec-ch-ua": '"Chromium";v="120", "Not A(Brand";v="99", "Google Chrome";v="120"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-site",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    };
+  }
+
+  /**
+   * Validates if the provided URL is a valid image URL
+   * @param {string} url - The URL to validate
+   * @returns {boolean} - True if valid, false otherwise
+   */
+  isValidImageUrl(url) {
+    try {
+      const urlObj = new URL(url);
+      return ['http:', 'https:'].includes(urlObj.protocol);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Downloads and converts image to base64
+   * @param {string} imageUrl - The image URL to download
+   * @returns {Promise<{base64Data: string, mimeType: string}>}
+   */
+  async downloadImageAsBase64(imageUrl) {
+    try {
+      const response = await fetch(imageUrl, {
+        headers: {
+          'User-Agent': this.defaultHeaders['user-agent']
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to download image. Status: ${response.status} ${response.statusText}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.startsWith('image/')) {
+        throw new Error(`URL does not point to an image. Content-Type: ${contentType || 'unknown'}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const base64Data = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+
+      return {
+        base64Data,
+        mimeType: contentType
+      };
+    } catch (error) {
+      throw new Error(`Image download failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Generates prompt from image
+   * @param {Object} options - Configuration options
+   * @param {string} options.imageUrl - URL of the image to process
+   * @param {string} [options.model='general'] - Model to use for prompt generation
+   * @param {string} [options.lang='en'] - Language for the generated prompt
+   * @returns {Promise<Object>} - API response with generated prompt
+   */
+  async getPrompt({ imageUrl, model = "general", lang = "en" }) {
+    if (!imageUrl) {
+      throw new Error("imageUrl is required");
+    }
+
+    if (!this.isValidImageUrl(imageUrl)) {
+      throw new Error("Invalid image URL provided");
+    }
+
+    const { base64Data, mimeType } = await this.downloadImageAsBase64(imageUrl);
+    const imageDataUri = `data:${mimeType};base64,${base64Data}`;
+
+    const payload = {
+      image: imageDataUri,
+      model: model,
+      language: lang
+    };
+
+    try {
+      const response = await fetch(this.apiUrl, {
+        method: 'POST',
+        headers: this.defaultHeaders,
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`API request failed: ${response.status} ${response.statusText}. ${errorData}`);
+      }
+
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      if (error.message.includes('API request failed')) {
+        throw error;
+      }
+      throw new Error(`ImagePromptGuru API Error: ${error.message}`);
+    }
+  }
+}
+
+/**
+ * Gets CORS headers object
+ * @returns {Object} - CORS headers
+ */
+function getCORSHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Max-Age': '86400'
+  };
+}
+
+/**
+ * Handles CORS preflight requests
+ * @param {Request} request - The incoming request
+ * @returns {Response} - CORS response
+ */
+function handleCORSPreflight(request) {
+  return new Response(null, { 
+    status: 200, 
+    headers: getCORSHeaders() 
+  });
+}
+
+/**
+ * Creates a JSON response with proper headers
+ * @param {Object} data - Response data
+ * @param {number} [status=200] - HTTP status code
+ * @param {Object} [additionalHeaders={}] - Additional headers
+ * @returns {Response} - JSON response
+ */
+function jsonResponse(data, status = 200, additionalHeaders = {}) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      ...getCORSHeaders(),
+      ...additionalHeaders
+    }
+  });
+}
+
+/**
+ * Extracts parameters from request (GET query params or POST body)
+ * @param {Request} request - The incoming request
+ * @returns {Promise<Object>} - Extracted parameters
+ */
+async function extractParams(request) {
+  const url = new URL(request.url);
+  
+  if (request.method === 'GET') {
+    return {
+      imageUrl: url.searchParams.get('imageUrl'),
+      model: url.searchParams.get('model') || 'general',
+      lang: url.searchParams.get('lang') || 'en'
+    };
+  } else if (request.method === 'POST') {
+    try {
+      const body = await request.json();
+      return {
+        imageUrl: body.imageUrl,
+        model: body.model || 'general',
+        lang: body.lang || 'en'
+      };
+    } catch {
+      throw new Error('Invalid JSON in request body');
+    }
+  }
+  
+  throw new Error('Method not allowed');
+}
+
+/**
+ * Main request handler for Cloudflare Workers
+ * @param {Request} request - The incoming request
+ * @param {Object} env - Environment variables
+ * @param {Object} ctx - Execution context
+ * @returns {Promise<Response>} - HTTP response
+ */
 export default {
   async fetch(request, env, ctx) {
-    // ==== CONFIGURATION ====
-    const RATE_LIMIT = 5;           // Max requests
-    const RATE_WINDOW = 60;         // In seconds
-    
-    const url = new URL(request.url);
-    
-    // ==== RATE LIMIT CHECK ====
-    const clientIP = request.headers.get('cf-connecting-ip') || 
-                     request.headers.get('x-forwarded-for') || 
-                     'unknown-ip';
-    
-    // Create a unique key for this IP
-    const rateKey = `rate_limit_${clientIP}`;
-    
-    // Get existing access log from KV namespace (you'll need to create this in Cloudflare dashboard)
-    let accessLog = [];
     try {
-      const storedLog = await env.RATE_LIMIT_KV.get(rateKey);
-      if (storedLog) {
-        accessLog = JSON.parse(storedLog);
+      if (request.method === 'OPTIONS') {
+        return handleCORSPreflight(request);
       }
-    } catch (e) {
-      // If KV not configured, continue without rate limiting
-      console.log('KV not configured, rate limiting disabled');
-    }
-    
-    const now = Math.floor(Date.now() / 1000); // Current time in seconds
-    
-    // Filter out old timestamps
-    accessLog = accessLog.filter(timestamp => {
-      return (timestamp + RATE_WINDOW) >= now;
-    });
-    
-    // Check if rate limit exceeded
-    if (accessLog.length >= RATE_LIMIT && env.RATE_LIMIT_KV) {
-      return new Response(
-        JSON.stringify({ error: "Rate limit exceeded. Try again later." }),
-        {
-          status: 429,
-          headers: { "Content-Type": "application/json" }
-        }
-      );
-    }
-    
-    // Log current request (only if KV is configured)
-    if (env.RATE_LIMIT_KV) {
-      accessLog.push(now);
-      // Store only the most recent RATE_LIMIT * 2 entries to prevent unbounded growth
-      if (accessLog.length > RATE_LIMIT * 2) {
-        accessLog = accessLog.slice(-RATE_LIMIT);
+
+      // Only allow GET and POST methods
+      if (!['GET', 'POST'].includes(request.method)) {
+        return jsonResponse(
+          { 
+            error: 'Method not allowed',
+            message: 'Only GET and POST methods are supported'
+          }, 
+          405
+        );
       }
-      
-      // Store with expiration to automatically clean up
-      await env.RATE_LIMIT_KV.put(
-        rateKey, 
-        JSON.stringify(accessLog),
-        { expirationTtl: RATE_WINDOW * 2 }
-      );
-    }
-    
-    // ==== VALIDATION ====
-    const targetUrl = url.searchParams.get('url');
-    if (!targetUrl) {
-      return new Response(
-        JSON.stringify({ error: "Missing 'url' parameter" }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/json" }
-        }
-      );
-    }
-    
-    // ==== BUILD API CALL ====
-    const encodedUrl = encodeURIComponent(targetUrl);
-    const apiUrl = `https://utdqxiuahh.execute-api.ap-south-1.amazonaws.com/pro/fetch?url=${encodedUrl}&user_id=h2`;
-    
-    const headers = {
-      "x-api-key": "fAtAyM17qm9pYmsaPlkAT8tRrDoHICBb2NnxcBPM",
-      "User-Agent": "okhttp/4.12.0",
-      "Accept-Encoding": "gzip",
-      "Accept": "application/json"
-    };
-    
-    // ==== MAKE REQUEST ====
-    try {
-      const response = await fetch(apiUrl, {
-        headers: headers,
-        cf: {
-          // Cloudflare-specific options
-          cacheEverything: false,
-          cacheTtl: 0
+
+      const params = await extractParams(request);
+
+      if (!params.imageUrl) {
+        return jsonResponse(
+          {
+            error: 'Missing required parameter',
+            message: 'imageUrl parameter is required'
+          },
+          400
+        );
+      }
+
+      const validModels = ['general'];
+      const validLanguages = ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'ja', 'ko', 'zh'];
+
+      if (params.model && !validModels.includes(params.model)) {
+        return jsonResponse(
+          {
+            error: 'Invalid model parameter',
+            message: `Model must be one of: ${validModels.join(', ')}`,
+            validModels
+          },
+          400
+        );
+      }
+
+      if (params.lang && !validLanguages.includes(params.lang)) {
+        return jsonResponse(
+          {
+            error: 'Invalid language parameter',
+            message: `Language must be one of: ${validLanguages.join(', ')}`,
+            validLanguages
+          },
+          400
+        );
+      }
+
+      const api = new ImagePromptAPI();
+      const result = await api.getPrompt(params);
+
+      return jsonResponse({
+        success: true,
+        data: result,
+        parameters: {
+          imageUrl: params.imageUrl,
+          model: params.model,
+          language: params.lang
         }
       });
-      
-      // Check if response is successful
-      if (!response.ok) {
-        throw new Error(`API returned ${response.status}: ${response.statusText}`);
-      }
-      
-      // Get the response data
-      const responseData = await response.text();
-      
-      // ==== RETURN RESULT ====
-      return new Response(responseData, {
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*", // Enable CORS if needed
-          "Cache-Control": "no-store, max-age=0"
-        }
-      });
-      
+
     } catch (error) {
-      // ==== ERROR HANDLING ====
-      return new Response(
-        JSON.stringify({ 
-          error: "Failed to fetch from API", 
-          details: error.message 
-        }),
+      console.error('Error processing request:', error);
+      
+      let status = 500;
+      if (error.message.includes('required') || 
+          error.message.includes('Invalid') || 
+          error.message.includes('download failed')) {
+        status = 400;
+      } else if (error.message.includes('API request failed')) {
+        status = 502;
+      }
+
+      return jsonResponse(
         {
-          status: 500,
-          headers: { "Content-Type": "application/json" }
-        }
+          error: 'Request failed',
+          message: error.message,
+          timestamp: new Date().toISOString()
+        },
+        status
       );
     }
   }
