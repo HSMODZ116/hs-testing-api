@@ -1,103 +1,128 @@
+// Cloudflare Worker Rate-Limited Proxy
 export default {
-  async fetch(request) {
+  async fetch(request, env, ctx) {
+    // ==== CONFIGURATION ====
+    const RATE_LIMIT = 5;           // Max requests
+    const RATE_WINDOW = 60;         // In seconds
+    
     const url = new URL(request.url);
-    const inputUrl = url.searchParams.get('url');
-
-    // Step 1: Validate Input
-    if (!inputUrl || !inputUrl.includes('instagram.com')) {
-      return new Response(
-        JSON.stringify({
-          status: 'error',
-          message: 'Missing or invalid Instagram URL'
-        }, null, 2),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const encodedUrl = encodeURIComponent(inputUrl);
-    const targetUrl = `https://snapdownloader.com/tools/instagram-reels-downloader/download?url=${encodedUrl}`;
-
-    // Step 2: Advanced Fetch with real browser-like headers
-    let response;
+    
+    // ==== RATE LIMIT CHECK ====
+    const clientIP = request.headers.get('cf-connecting-ip') || 
+                     request.headers.get('x-forwarded-for') || 
+                     'unknown-ip';
+    
+    // Create a unique key for this IP
+    const rateKey = `rate_limit_${clientIP}`;
+    
+    // Get existing access log from KV namespace (you'll need to create this in Cloudflare dashboard)
+    let accessLog = [];
     try {
-      response = await fetch(targetUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Referer': 'https://snapdownloader.com/',
-          'Origin': 'https://snapdownloader.com',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'same-origin',
-          'Pragma': 'no-cache',
-          'Cache-Control': 'no-cache'
-        },
-        redirect: 'follow'
-      });
-    } catch (err) {
-      return new Response(
-        JSON.stringify({
-          status: 'error',
-          message: 'Request failed',
-          credit: '@hsmodzofc2'
-        }, null, 2),
-        { status: 502, headers: { 'Content-Type': 'application/json' } }
-      );
+      const storedLog = await env.RATE_LIMIT_KV.get(rateKey);
+      if (storedLog) {
+        accessLog = JSON.parse(storedLog);
+      }
+    } catch (e) {
+      // If KV not configured, continue without rate limiting
+      console.log('KV not configured, rate limiting disabled');
     }
-
-    if (!response.ok) {
+    
+    const now = Math.floor(Date.now() / 1000); // Current time in seconds
+    
+    // Filter out old timestamps
+    accessLog = accessLog.filter(timestamp => {
+      return (timestamp + RATE_WINDOW) >= now;
+    });
+    
+    // Check if rate limit exceeded
+    if (accessLog.length >= RATE_LIMIT && env.RATE_LIMIT_KV) {
       return new Response(
-        JSON.stringify({
-          status: 'error',
-          message: `HTTP ${response.status} from snapdownloader`,
-          credit: '@hsmodzofc2'
-        }, null, 2),
-        { status: response.status, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const html = await response.text();
-
-    // Step 4: Extract Video URL (.mp4)
-    const videoRegex = /<a[^>]+href="([^"]*\.mp4[^"]*)"[^>]*>/i;
-    const videoMatch = html.match(videoRegex);
-    let videoUrl = videoMatch ? decodeURIComponent(videoMatch[1].replace(/&amp;/g, '&')) : '';
-
-    // Step 5: Extract Thumbnail (.jpg)
-    const thumbRegex = /<a[^>]+href="([^"]*\.jpg[^"]*)"[^>]*>/i;
-    const thumbMatch = html.match(thumbRegex);
-    let thumbUrl = thumbMatch ? decodeURIComponent(thumbMatch[1].replace(/&amp;/g, '&')) : '';
-
-    // Step 6: Final Response
-    if (videoUrl && videoUrl.includes('.mp4')) {
-      return new Response(
-        JSON.stringify({
-          status: 'success',
-          video: videoUrl,
-          thumbnail: thumbUrl || null,
-          channel: '@hsmodzofc2'  // Aapka credit
-        }, null, 2),
+        JSON.stringify({ error: "Rate limit exceeded. Try again later." }),
         {
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'no-store'
-          }
+          status: 429,
+          headers: { "Content-Type": "application/json" }
         }
       );
-    } else {
+    }
+    
+    // Log current request (only if KV is configured)
+    if (env.RATE_LIMIT_KV) {
+      accessLog.push(now);
+      // Store only the most recent RATE_LIMIT * 2 entries to prevent unbounded growth
+      if (accessLog.length > RATE_LIMIT * 2) {
+        accessLog = accessLog.slice(-RATE_LIMIT);
+      }
+      
+      // Store with expiration to automatically clean up
+      await env.RATE_LIMIT_KV.put(
+        rateKey, 
+        JSON.stringify(accessLog),
+        { expirationTtl: RATE_WINDOW * 2 }
+      );
+    }
+    
+    // ==== VALIDATION ====
+    const targetUrl = url.searchParams.get('url');
+    if (!targetUrl) {
       return new Response(
-        JSON.stringify({
-          status: 'error',
-          message: 'Video not found in response',
-          channel: '@hsmodzofc2'
-        }, null, 2),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: "Missing 'url' parameter" }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    }
+    
+    // ==== BUILD API CALL ====
+    const encodedUrl = encodeURIComponent(targetUrl);
+    const apiUrl = `https://utdqxiuahh.execute-api.ap-south-1.amazonaws.com/pro/fetch?url=${encodedUrl}&user_id=h2`;
+    
+    const headers = {
+      "x-api-key": "fAtAyM17qm9pYmsaPlkAT8tRrDoHICBb2NnxcBPM",
+      "User-Agent": "okhttp/4.12.0",
+      "Accept-Encoding": "gzip",
+      "Accept": "application/json"
+    };
+    
+    // ==== MAKE REQUEST ====
+    try {
+      const response = await fetch(apiUrl, {
+        headers: headers,
+        cf: {
+          // Cloudflare-specific options
+          cacheEverything: false,
+          cacheTtl: 0
+        }
+      });
+      
+      // Check if response is successful
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}: ${response.statusText}`);
+      }
+      
+      // Get the response data
+      const responseData = await response.text();
+      
+      // ==== RETURN RESULT ====
+      return new Response(responseData, {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*", // Enable CORS if needed
+          "Cache-Control": "no-store, max-age=0"
+        }
+      });
+      
+    } catch (error) {
+      // ==== ERROR HANDLING ====
+      return new Response(
+        JSON.stringify({ 
+          error: "Failed to fetch from API", 
+          details: error.message 
+        }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        }
       );
     }
   }
