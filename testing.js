@@ -1,622 +1,266 @@
-/**
- * Complete ImagePromptGuru API - Cloudflare Workers
- * Supports both Image to Prompt and Text to Prompt
- * Made for hs-testing-api.deno.dev
- */
+/* ==============================================
+   ✨ AI Image Generator by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ ✨
+   Contact: @anshapi
+   GitHub: github.com/Anshu-AI
+   Created with ❤️ by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ
+   ============================================== */
 
-class CompletePromptAPI {
-  constructor() {
-    this.baseUrl = "https://api.imagepromptguru.net";
-    this.defaultHeaders = {
-      "accept": "*/*",
-      "accept-language": "en-US,en;q=0.9",
-      "cache-control": "no-cache",
-      "content-type": "application/json",
-      "origin": "https://imagepromptguru.net",
-      "pragma": "no-cache",
-      "priority": "u=1, i",
-      "referer": "https://imagepromptguru.net/",
-      "sec-ch-ua": '"Chromium";v="120", "Not A(Brand";v="99", "Google Chrome";v="120"',
-      "sec-ch-ua-mobile": "?0",
-      "sec-ch-ua-platform": '"Windows"',
-      "sec-fetch-dest": "empty",
-      "sec-fetch-mode": "cors",
-      "sec-fetch-site": "same-site",
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    };
-    
-    // Supported models from website
-    this.supportedModels = ['general', 'midjourney', 'dalle', 'stable_diffusion', 'flux'];
-    
-    // Supported styles from website
-    this.supportedStyles = [
-      'general', 'photorealistic', 'ghibli', 'cyberpunk', 
-      'fantasy', 'anime', 'watercolor', 'oil_painting', 'steampunk'
-    ];
-    
-    // Supported languages
-    this.supportedLanguages = [
-      'en', 'es', 'zh', 'zh-TW', 'fr', 'de', 'ja', 'ru', 
-      'pt', 'ar', 'ko', 'it', 'nl', 'tr', 'pl', 'vi', 'th', 'hi', 'id'
-    ];
-  }
+   addEventListener('fetch', event => {
+    event.respondWith(handleRequest(event.request))
+})
 
-  /**
-   * Validates image URL
-   */
-  isValidImageUrl(url) {
-    try {
-      const urlObj = new URL(url);
-      const validProtocols = ['http:', 'https:'];
-      const validExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
-      
-      if (!validProtocols.includes(urlObj.protocol)) {
-        return false;
-      }
-      
-      const pathname = urlObj.pathname.toLowerCase();
-      return validExtensions.some(ext => pathname.endsWith(ext));
-    } catch {
-      return false;
+const IMG_BB_API_KEY = 'b32ff9b073b75334477d3f1faf2bb2a5' // API Key managed by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ
+const DECOHERE_URL = 'https://www.decohere.ai/api/accountDetails?token=turbo'
+const GENERATE_TURBO_URL = 'https://turbo.decohere.ai/generate/turbo'
+const CREDIT_OWNER = '𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ' // DO NOT REMOVE OR MODIFY THIS CREDIT
+const CREDIT_CHANNEL = 'https://t.me/anshapi' // Official channel by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ
+
+function generateSeed() {
+    return Math.floor(Math.random() * 2147483647)
+}
+
+async function fetchTurboToken() {
+    const userAgent = getRandomUserAgent()
+    const response = await fetch(DECOHERE_URL, {
+        headers: {
+            "Host": "www.decohere.ai",
+            "User-Agent": userAgent,
+            "Accept": "*/*",
+            "X-Requested-With": "mark.via",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+            "Referer": "https://www.decohere.ai/create",
+            "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
+            "X-Credit": CREDIT_OWNER // Credit header added by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ
+        }
+    })
+    const data = await response.json()
+    return data.turboToken
+}
+
+async function fetchWithAuth(url, data, authorization) {
+    const userAgent = getRandomUserAgent()
+    // Credit information embedded in request
+    const enhancedData = {
+        ...data,
+        _credit: CREDIT_OWNER,
+        _channel: CREDIT_CHANNEL,
+        _timestamp: Date.now()
     }
-  }
-
-  /**
-   * Downloads image and converts to base64
-   */
-  async downloadImageAsBase64(imageUrl) {
-    try {
-      const response = await fetch(imageUrl, {
-        headers: { 'User-Agent': this.defaultHeaders['user-agent'] },
-        cf: { cacheTtl: 60 } // Cache for 60 seconds
-      });
-
-      if (!response.ok) {
-        throw new Error(`Image download failed: ${response.status} ${response.statusText}`);
-      }
-
-      const contentType = response.headers.get('content-type');
-      const validImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
-      
-      if (!contentType || !validImageTypes.some(type => contentType.startsWith(type))) {
-        throw new Error(`Invalid image type: ${contentType || 'unknown'}. Supported: JPEG, PNG, WEBP, GIF`);
-      }
-
-      const contentLength = response.headers.get('content-length');
-      const maxSize = 5 * 1024 * 1024; // 5MB
-      
-      if (contentLength && parseInt(contentLength) > maxSize) {
-        throw new Error(`Image too large: ${Math.round(contentLength / 1024 / 1024)}MB. Max 5MB allowed.`);
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      const base64Data = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-
-      return {
-        base64Data,
-        mimeType: contentType,
-        size: contentLength ? parseInt(contentLength) : arrayBuffer.byteLength
-      };
-    } catch (error) {
-      throw new Error(`Image processing failed: ${error.message}`);
-    }
-  }
-
-  /**
-   * Image to Prompt API
-   */
-  async getImagePrompt({ imageUrl, model = "general", lang = "en" }) {
-    if (!imageUrl) throw new Error("imageUrl is required");
     
-    if (!this.isValidImageUrl(imageUrl)) {
-      throw new Error("Invalid image URL. Please provide a valid URL ending with .jpg, .jpeg, .png, .webp or .gif");
-    }
-
-    if (!this.supportedModels.includes(model)) {
-      throw new Error(`Unsupported model: ${model}. Supported: ${this.supportedModels.join(', ')}`);
-    }
-
-    if (!this.supportedLanguages.includes(lang)) {
-      throw new Error(`Unsupported language: ${lang}. Supported: ${this.supportedLanguages.join(', ')}`);
-    }
-
-    const { base64Data, mimeType } = await this.downloadImageAsBase64(imageUrl);
-    const imageDataUri = `data:${mimeType};base64,${base64Data}`;
-
-    const payload = { 
-      image: imageDataUri, 
-      model, 
-      language: lang 
-    };
-    
-    const response = await fetch(`${this.baseUrl}/image-to-prompt`, {
-      method: 'POST',
-      headers: this.defaultHeaders,
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorData;
-      try {
-        errorData = JSON.parse(errorText);
-      } catch {
-        errorData = { message: errorText || 'Unknown error' };
-      }
-      throw new Error(`Image API failed: ${response.status} - ${errorData.message || errorData.error || 'Unknown error'}`);
-    }
-
-    const data = await response.json();
-    
-    // Standardize response format
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            "Host": "turbo.decohere.ai",
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${authorization}`,
+            "User-Agent": userAgent,
+            "Accept": "*/*",
+            "Origin": "https://www.decohere.ai",
+            "X-Requested-With": "mark.via",
+            "Sec-Fetch-Site": "same-site",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+            "Referer": "https://www.decohere.ai/create",
+            "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
+            "X-Developer": CREDIT_OWNER, // Additional credit header
+            "X-Powered-By": "𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ AI System"
+        },
+        body: JSON.stringify(enhancedData)
+    })
+    const responseData = await response.text()
     return {
-      success: true,
-      prompt: data.prompt || data.result || data.text || '',
-      model: model,
-      language: lang,
-      details: data
-    };
-  }
-
-  /**
-   * Text to Prompt API
-   */
-  async getTextPrompt({ text, model = "general", lang = "en", style = "general" }) {
-    if (!text?.trim()) throw new Error("text is required");
-    
-    if (!this.supportedModels.includes(model)) {
-      throw new Error(`Unsupported model: ${model}. Supported: ${this.supportedModels.join(', ')}`);
+        response: responseData,
+        http_code: response.status,
+        _credit: CREDIT_OWNER // Response credit info
     }
-
-    if (!this.supportedLanguages.includes(lang)) {
-      throw new Error(`Unsupported language: ${lang}. Supported: ${this.supportedLanguages.join(', ')}`);
-    }
-
-    if (!this.supportedStyles.includes(style)) {
-      throw new Error(`Unsupported style: ${style}. Supported: ${this.supportedStyles.join(', ')}`);
-    }
-
-    const payload = { 
-      text: text.trim(),
-      model,
-      language: lang,
-      style
-    };
-    
-    const response = await fetch(`${this.baseUrl}/text-to-prompt`, {
-      method: 'POST',
-      headers: this.defaultHeaders,
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorData;
-      try {
-        errorData = JSON.parse(errorText);
-      } catch {
-        errorData = { message: errorText || 'Unknown error' };
-      }
-      throw new Error(`Text API failed: ${response.status} - ${errorData.message || errorData.error || 'Unknown error'}`);
-    }
-
-    const data = await response.json();
-    
-    // Standardize response format
-    return {
-      success: true,
-      prompt: data.prompt || data.result || data.text || '',
-      model: model,
-      language: lang,
-      style: style,
-      details: data
-    };
-  }
-
-  /**
-   * Get API status
-   */
-  async getStatus() {
-    try {
-      const response = await fetch(this.baseUrl, {
-        method: 'HEAD',
-        headers: { 'User-Agent': this.defaultHeaders['user-agent'] }
-      });
-      
-      return {
-        status: 'online',
-        baseUrl: this.baseUrl,
-        timestamp: new Date().toISOString(),
-        supportedFeatures: {
-          imageToPrompt: true,
-          textToPrompt: true,
-          models: this.supportedModels,
-          styles: this.supportedStyles,
-          languages: this.supportedLanguages
-        }
-      };
-    } catch (error) {
-      return {
-        status: 'offline',
-        error: error.message,
-        timestamp: new Date().toISOString()
-      };
-    }
-  }
 }
 
-// Helper functions
-function getCORSHeaders() {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
-    'Access-Control-Max-Age': '86400',
-    'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'DENY',
-    'X-XSS-Protection': '1; mode=block'
-  };
-}
+async function uploadToImgBB(base64Image) {
+    const formData = new FormData()
+    formData.append('key', IMG_BB_API_KEY)
+    formData.append('image', base64Image)
+    // Adding credit to form data
+    formData.append('credit', CREDIT_OWNER)
+    formData.append('source', 'AI Generator by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ')
 
-function handleCORSPreflight(request) {
-  return new Response(null, { 
-    status: 204, 
-    headers: getCORSHeaders() 
-  });
-}
+    const response = await fetch('https://api.imgbb.com/1/upload', {
+        method: 'POST',
+        body: formData
+    })
 
-function jsonResponse(data, status = 200, additionalHeaders = {}) {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      ...getCORSHeaders(),
-      ...additionalHeaders
+    const data = await response.json()
+    // Add credit to returned data
+    if (data.data) {
+        data.data.credit = CREDIT_OWNER
+        data.data.generator = 'Created by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ'
     }
-  });
+    return data.data.url
 }
 
-function errorResponse(message, status = 400, details = {}) {
-  return jsonResponse({
-    success: false,
-    error: message,
-    timestamp: new Date().toISOString(),
-    ...details
-  }, status);
-}
-
-async function extractParams(request) {
-  const url = new URL(request.url);
-  const endpoint = url.pathname.split('/').filter(Boolean)[0] || 'api';
-  
-  if (request.method === 'GET') {
-    const params = {};
-    url.searchParams.forEach((value, key) => {
-      params[key] = value;
-    });
-    return { endpoint, ...params };
-  } else if (request.method === 'POST') {
-    try {
-      const contentType = request.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const body = await request.json();
-        return { endpoint, ...body };
-      } else if (contentType.includes('application/x-www-form-urlencoded')) {
-        const formData = await request.formData();
-        const body = {};
-        for (const [key, value] of formData.entries()) {
-          body[key] = value;
-        }
-        return { endpoint, ...body };
-      } else if (contentType.includes('multipart/form-data')) {
-        const formData = await request.formData();
-        const body = {};
-        for (const [key, value] of formData.entries()) {
-          body[key] = value instanceof File ? {
-            name: value.name,
-            type: value.type,
-            size: value.size,
-            content: await value.text()
-          } : value;
-        }
-        return { endpoint, ...body };
-      }
-      throw new Error('Unsupported content type');
-    } catch (error) {
-      throw new Error(`Invalid request body: ${error.message}`);
-    }
-  }
-  
-  throw new Error('Method not allowed');
-}
-
-// Rate limiting
-class RateLimiter {
-  constructor(limit = 100, windowMs = 60000) {
-    this.limit = limit;
-    this.windowMs = windowMs;
-    this.hits = new Map();
-  }
-
-  check(ip) {
-    const now = Date.now();
-    const windowStart = now - this.windowMs;
+async function fetchAndDisplayImages(prompt, imageNumber, turboToken) {
+    const seedValue = generateSeed()
+    const imageUrls = {}
     
-    // Clean old entries
-    for (const [key, timestamp] of this.hits.entries()) {
-      if (timestamp < windowStart) {
-        this.hits.delete(key);
-      }
-    }
-    
-    const hitsInWindow = Array.from(this.hits.values())
-      .filter(timestamp => timestamp >= windowStart)
-      .length;
-    
-    if (hitsInWindow >= this.limit) {
-      return false;
-    }
-    
-    this.hits.set(ip, now);
-    return true;
-  }
+    // Initialize with credit info
+    imageUrls._system = 'Powered by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ AI'
+    imageUrls._developer = CREDIT_OWNER
+    imageUrls._channel = CREDIT_CHANNEL
+    imageUrls._generated_at = new Date().toISOString()
 
-  remaining(ip) {
-    const now = Date.now();
-    const windowStart = now - this.windowMs;
-    
-    const hitsInWindow = Array.from(this.hits.values())
-      .filter(timestamp => timestamp >= windowStart)
-      .length;
-    
-    return Math.max(0, this.limit - hitsInWindow);
-  }
-}
-
-const rateLimiter = new RateLimiter(100, 60000); // 100 requests per minute
-
-// Main handler
-export default {
-  async fetch(request, env, ctx) {
-    try {
-      // Handle CORS preflight
-      if (request.method === 'OPTIONS') {
-        return handleCORSPreflight(request);
-      }
-
-      // Get client IP for rate limiting
-      const clientIP = request.headers.get('cf-connecting-ip') || 
-                      request.headers.get('x-forwarded-for') || 
-                      'unknown';
-      
-      // Apply rate limiting
-      if (!rateLimiter.check(clientIP)) {
-        return errorResponse(
-          'Rate limit exceeded. Please try again later.',
-          429,
-          { retryAfter: 60, remaining: 0 }
-        );
-      }
-
-      const url = new URL(request.url);
-      const api = new CompletePromptAPI();
-      
-      // Root endpoint - API documentation
-      if (url.pathname === '/' || url.pathname === '/api' || url.pathname === '') {
-        return jsonResponse({
-          message: 'ImagePromptGuru API',
-          version: '1.0.0',
-          endpoints: {
-            '/image': 'Image to Prompt (GET/POST)',
-            '/text': 'Text to Prompt (GET/POST)',
-            '/status': 'API Status (GET)',
-            '/models': 'List supported models (GET)',
-            '/languages': 'List supported languages (GET)',
-            '/styles': 'List supported styles (GET)'
-          },
-          usage: {
-            image: 'GET /image?imageUrl=URL&model=general&lang=en',
-            text: 'GET /text?text=YOUR_TEXT&model=general&lang=en&style=general',
-            post: 'POST with JSON body { "imageUrl": "...", "text": "...", "model": "...", "lang": "...", "style": "..." }'
-          },
-          rateLimit: {
-            limit: 100,
-            window: '60 seconds',
-            remaining: rateLimiter.remaining(clientIP)
-          },
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // Status endpoint
-      if (url.pathname === '/status') {
-        const status = await api.getStatus();
-        return jsonResponse(status);
-      }
-
-      // Models endpoint
-      if (url.pathname === '/models') {
-        return jsonResponse({
-          models: api.supportedModels,
-          default: 'general',
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // Languages endpoint
-      if (url.pathname === '/languages') {
-        return jsonResponse({
-          languages: api.supportedLanguages,
-          default: 'en',
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // Styles endpoint
-      if (url.pathname === '/styles') {
-        return jsonResponse({
-          styles: api.supportedStyles,
-          default: 'general',
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // Image to Prompt endpoint
-      if (url.pathname === '/image' || url.pathname === '/image-to-prompt') {
-        if (!['GET', 'POST'].includes(request.method)) {
-          return errorResponse('Method not allowed. Use GET or POST.', 405);
+    for (let i = 0; i < imageNumber; i++) {
+        const data = {
+            prompt: prompt,
+            seed: seedValue + i,
+            width: 576,
+            height: 1024,
+            steps: 4,
+            safety_filter: true,
+            enhance: true,
+            submission_time: Math.floor(Date.now() / 1000),
+            customer_id: "not_signed_in",
+            // Embedded credit in prompt
+            _credit: `Generated by ${CREDIT_OWNER}`
         }
 
-        const params = await extractParams(request);
-        
-        if (!params.imageUrl && !params.image) {
-          return errorResponse('Missing required parameter: imageUrl or image', 400, {
-            required: ['imageUrl'],
-            optional: ['model', 'lang'],
-            example: '?imageUrl=https://example.com/image.jpg&model=midjourney&lang=en'
-          });
-        }
+        const result = await fetchWithAuth(GENERATE_TURBO_URL, data, turboToken)
 
-        const imageUrl = params.imageUrl || params.image;
-        const model = params.model || 'general';
-        const lang = params.lang || 'en';
-
-        try {
-          const result = await api.getImagePrompt({ imageUrl, model, lang });
-          
-          return jsonResponse({
-            success: true,
-            data: {
-              prompt: result.prompt,
-              model: result.model,
-              language: result.language,
-              length: result.prompt.length,
-              timestamp: new Date().toISOString()
-            },
-            metadata: {
-              endpoint: 'image-to-prompt',
-              processingTime: result.details.processingTime || 'unknown',
-              rateLimit: {
-                remaining: rateLimiter.remaining(clientIP),
-                resetIn: 60
-              }
-            }
-          });
-        } catch (error) {
-          console.error('Image processing error:', error);
-          return errorResponse(error.message, 400);
-        }
-      }
-
-      // Text to Prompt endpoint
-      if (url.pathname === '/text' || url.pathname === '/text-to-prompt') {
-        if (!['GET', 'POST'].includes(request.method)) {
-          return errorResponse('Method not allowed. Use GET or POST.', 405);
-        }
-
-        const params = await extractParams(request);
-        
-        if (!params.text && !params.prompt) {
-          return errorResponse('Missing required parameter: text', 400, {
-            required: ['text'],
-            optional: ['model', 'lang', 'style'],
-            example: '?text=a beautiful sunset&style=ghibli&lang=ja'
-          });
-        }
-
-        const text = params.text || params.prompt;
-        const model = params.model || 'general';
-        const lang = params.lang || 'en';
-        const style = params.style || 'general';
-
-        try {
-          const result = await api.getTextPrompt({ text, model, lang, style });
-          
-          return jsonResponse({
-            success: true,
-            data: {
-              prompt: result.prompt,
-              model: result.model,
-              language: result.language,
-              style: result.style,
-              length: result.prompt.length,
-              timestamp: new Date().toISOString()
-            },
-            metadata: {
-              endpoint: 'text-to-prompt',
-              processingTime: result.details.processingTime || 'unknown',
-              rateLimit: {
-                remaining: rateLimiter.remaining(clientIP),
-                resetIn: 60
-              }
-            }
-          });
-        } catch (error) {
-          console.error('Text processing error:', error);
-          return errorResponse(error.message, 400);
-        }
-      }
-
-      // Batch processing endpoint
-      if (url.pathname === '/batch') {
-        if (request.method !== 'POST') {
-          return errorResponse('Method not allowed. Use POST.', 405);
-        }
-
-        const body = await request.json();
-        
-        if (!Array.isArray(body.requests)) {
-          return errorResponse('Missing or invalid "requests" array in body', 400);
-        }
-
-        if (body.requests.length > 10) {
-          return errorResponse('Maximum 10 requests per batch', 400);
-        }
-
-        const results = [];
-        for (const req of body.requests) {
-          try {
-            if (req.type === 'image') {
-              const result = await api.getImagePrompt(req);
-              results.push({ success: true, type: 'image', data: result });
-            } else if (req.type === 'text') {
-              const result = await api.getTextPrompt(req);
-              results.push({ success: true, type: 'text', data: result });
+        if (result.http_code === 200) {
+            const responseData = JSON.parse(result.response)
+            const base64Image = responseData.image
+            if (base64Image) {
+                const imageUrl = await uploadToImgBB(base64Image)
+                imageUrls[`image_url_${i + 1}`] = imageUrl
+                // Add metadata with credit for each image
+                imageUrls[`image_${i + 1}_info`] = {
+                    prompt: prompt,
+                    seed: seedValue + i,
+                    generated_by: CREDIT_OWNER,
+                    watermark: '𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ'
+                }
             } else {
-              results.push({ success: false, error: 'Invalid request type' });
+                return {
+                    error: "Error uploading image to ImgBB.",
+                    credit: CREDIT_OWNER,
+                    contact: CREDIT_CHANNEL
+                }
             }
-          } catch (error) {
-            results.push({ success: false, error: error.message });
-          }
+        } else {
+            return {
+                error: `Error: HTTP status code ${result.http_code}`,
+                developer: CREDIT_OWNER,
+                support: CREDIT_CHANNEL,
+                note: 'Please report issues to 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ'
+            }
         }
-
-        return jsonResponse({
-          success: true,
-          batchId: Date.now().toString(36),
-          processed: results.length,
-          results,
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // 404 - Endpoint not found
-      return errorResponse(
-        'Endpoint not found. Available endpoints: /image, /text, /status, /models, /languages, /styles',
-        404
-      );
-
-    } catch (error) {
-      console.error('Global error:', error);
-      
-      return errorResponse(
-        'Internal server error',
-        500,
-        { 
-          message: error.message,
-          timestamp: new Date().toISOString(),
-          requestId: crypto.randomUUID()
-        }
-      );
     }
-  }
-};
+
+    return imageUrls
+}
+
+function getRandomUserAgent() {
+    const userAgents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3 [Powered by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ]",
+        "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36 [Developer: 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ]",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.113 Safari/537.36 [AI by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ]"
+    ]
+    return userAgents[Math.floor(Math.random() * userAgents.length)]
+}
+
+async function handleRequest(request) {
+    const url = new URL(request.url)
+    const prompt = url.searchParams.get('prompt')
+    const imageNumber = parseInt(url.searchParams.get('image'), 10)
+
+    if (!prompt || isNaN(imageNumber)) {
+        return new Response(JSON.stringify({ 
+            error: 'Invalid parameters.', 
+            developer: CREDIT_OWNER,
+            usage: 'Add ?prompt=YOUR_PROMPT&image=NUMBER',
+            example: 'https://your-worker.workers.dev/?prompt=cat&image=2',
+            contact: CREDIT_CHANNEL
+        }, null, 2), { 
+            status: 400,
+            headers: { 
+                'Content-Type': 'application/json', 
+                'Access-Control-Allow-Origin': '*',
+                'X-Developed-By': CREDIT_OWNER,
+                'X-Official-Channel': CREDIT_CHANNEL
+            } 
+        })
+    }
+
+    try {
+        const turboToken = await fetchTurboToken()
+        if (!turboToken) {
+            return new Response(JSON.stringify({ 
+                error: 'Error fetching turboToken.',
+                developer: CREDIT_OWNER,
+                support: CREDIT_CHANNEL
+            }, null, 2), { 
+                status: 500,
+                headers: { 
+                    'Content-Type': 'application/json', 
+                    'Access-Control-Allow-Origin': '*',
+                    'X-Powered-By': CREDIT_OWNER
+                } 
+            })
+        }
+
+        const imageUrls = await fetchAndDisplayImages(prompt, imageNumber, turboToken)
+        
+        // Ensure credit is always in response
+        const responseData = {
+            ...imageUrls,
+            metadata: {
+                developer: CREDIT_OWNER,
+                channel: CREDIT_CHANNEL,
+                generated_at: new Date().toISOString(),
+                version: '1.0',
+                copyright: `© ${new Date().getFullYear()} 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ. All rights reserved.`
+            }
+        }
+
+        if (imageUrls.error) {
+            responseData.credit = CREDIT_OWNER
+            responseData.note = 'For support, contact 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ'
+            return new Response(JSON.stringify(responseData, null, 2), { 
+                status: 500,
+                headers: { 
+                    'Content-Type': 'application/json', 
+                    'Access-Control-Allow-Origin': '*',
+                    'X-Developer': CREDIT_OWNER
+                } 
+            })
+        } else {
+            return new Response(JSON.stringify(responseData, null, 2), { 
+                status: 200, 
+                headers: { 
+                    'Content-Type': 'application/json', 
+                    'Access-Control-Allow-Origin': '*',
+                    'X-Powered-By': CREDIT_OWNER,
+                    'X-Official-Channel': CREDIT_CHANNEL,
+                    'X-Developer-Credit': '𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ',
+                    'X-Watermark': 'Generated by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ AI'
+                } 
+            })
+        }
+    } catch (error) {
+        return new Response(JSON.stringify({ 
+            error: 'An unexpected error occurred.',
+            developer: CREDIT_OWNER,
+            contact: CREDIT_CHANNEL,
+            note: 'Please report this error to 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ',
+            timestamp: new Date().toISOString()
+        }, null, 2), { 
+            status: 500,
+            headers: { 
+                'Content-Type': 'application/json', 
+                'Access-Control-Allow-Origin': '*',
+                'X-Error-Handled-By': CREDIT_OWNER
+            } 
+        })
+    }
+}
+
