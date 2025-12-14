@@ -1,117 +1,227 @@
-/* ==============================================
-   ✨ AI Image Generator by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ ✨
-   Contact: @anshapi
-   GitHub: github.com/Anshu-AI
-   Created with ❤️ by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ
-   ============================================== */
+// Made by Ashlynn Repository
+// Hosted on Cloudflare Workers
+// Repository: https://t.me/Ashlynn_Repository
+// Magic Studio AI Art Generator API
+const CUSTOM_HEADERS = {
+  "X-Creator": "https://t.me/Ashlynn_Repository",
+  "X-Powered-By": "Cloudflare Workers"
+};
 
-import { serve } from "https://deno.land/std@0.203.0/http/server.ts";
-
-const IMG_BB_API_KEY = 'b32ff9b073b75334477d3f1faf2bb2a5';
-const DECOHERE_URL = 'https://www.decohere.ai/api/accountDetails?token=turbo';
-const GENERATE_TURBO_URL = 'https://turbo.decohere.ai/generate/turbo';
-const CREDIT_OWNER = '𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ';
-const CREDIT_CHANNEL = 'https://t.me/anshapi';
-
-function generateSeed() {
-    return Math.floor(Math.random() * 2147483647);
+function generateClientId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
-function getRandomUserAgent() {
-    const userAgents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/58.0.3029.110 Safari/537.3 [Powered by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ]",
-        "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 Chrome/59.0.3071.115 Safari/537.36 [Developer: 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ]",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/60.0.3112.113 Safari/537.36 [AI by 𝐃ᴇᴠ|𝐀ɴ𝐬ʜ𝐀ᴘɪ]"
-    ];
-    return userAgents[Math.floor(Math.random() * userAgents.length)];
+function generateUUID() {
+  return crypto.randomUUID();
 }
 
-async function fetchTurboToken() {
-    try {
-        const res = await fetch(DECOHERE_URL, {
-            headers: { "User-Agent": getRandomUserAgent() }
-        });
-        const data = await res.json();
-        return data.turboToken || null;
-    } catch {
-        return null;
-    }
+function createFormData(prompt) {
+  const boundary = `----WebKitFormBoundary${Math.random().toString(36).substring(2)}`;
+  const parts = [];
+  
+  const fields = {
+    prompt: prompt,
+    output_format: "bytes",
+    user_profile_id: "null",
+    anonymous_user_id: generateUUID(),
+    request_timestamp: (Date.now() / 1000).toFixed(3),
+    user_is_subscribed: "false",
+    client_id: generateClientId()
+  };
+
+  for (const [key, value] of Object.entries(fields)) {
+    parts.push(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="${key}"\r\n\r\n` +
+      `${value}\r\n`
+    );
+  }
+
+  parts.push(`--${boundary}--\r\n`);
+  
+  return {
+    body: parts.join(''),
+    contentType: `multipart/form-data; boundary=${boundary}`
+  };
 }
 
-async function fetchWithAuth(url, data, token) {
-    const enhancedData = { ...data, _credit: CREDIT_OWNER, _channel: CREDIT_CHANNEL, _timestamp: Date.now() };
-    const res = await fetch(url, {
-        method: 'POST',
+async function scrapeImage(prompt) {
+  const formData = createFormData(prompt);
+
+  try {
+    const response = await fetch(
+      "https://ai-api.magicstudio.com/api/ai-art-generator",
+      {
+        method: "POST",
         headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`,
-            "User-Agent": getRandomUserAgent()
+          "Content-Type": formData.contentType,
+          "accept": "application/json, text/plain, */*",
+          "origin": "https://magicstudio.com",
+          "referer": "https://magicstudio.com/ai-art-generator/",
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0"
         },
-        body: JSON.stringify(enhancedData)
-    });
-    const text = await res.text();
-    return { http_code: res.status, response: text };
-}
+        body: formData.body
+      }
+    );
 
-async function uploadToImgBB(base64Image) {
-    try {
-        const params = new URLSearchParams();
-        params.append('key', IMG_BB_API_KEY);
-        params.append('image', base64Image);
-        const res = await fetch('https://api.imgbb.com/1/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: params
-        });
-        const data = await res.json();
-        return data.data?.url || null;
-    } catch {
-        return null;
+    if (!response.ok) {
+      throw new Error(`API returned status ${response.status}`);
     }
+
+    return await response.arrayBuffer();
+  } catch (error) {
+    console.error("API Error:", error.message);
+    throw new Error(`Failed to get response from API: ${error.message}`);
+  }
 }
 
-async function fetchAndDisplayImages(prompt, imageNumber, turboToken) {
-    const seedValue = generateSeed();
-    const imageUrls = {};
-    for (let i = 0; i < imageNumber; i++) {
-        const data = { prompt, seed: seedValue + i, width: 576, height: 1024, steps: 4, safety_filter: true, enhance: true, submission_time: Math.floor(Date.now()/1000), customer_id: "not_signed_in", _credit: `Generated by ${CREDIT_OWNER}` };
-        const result = await fetchWithAuth(GENERATE_TURBO_URL, data, turboToken);
-        if (result.http_code === 200) {
-            try {
-                const json = JSON.parse(result.response);
-                const base64Image = json.image;
-                if (base64Image) {
-                    const url = await uploadToImgBB(base64Image);
-                    imageUrls[`image_url_${i+1}`] = url;
-                } else {
-                    imageUrls[`image_url_${i+1}`] = null;
-                }
-            } catch {
-                imageUrls[`image_url_${i+1}`] = null;
+function createImageResponse(buffer, filename = null) {
+  const headers = {
+    "Content-Type": "image/jpeg",
+    "Content-Length": buffer.byteLength.toString(),
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    ...CUSTOM_HEADERS
+  };
+
+  if (filename) {
+    headers["Content-Disposition"] = `inline; filename="${filename}"`;
+  }
+
+  return new Response(buffer, { headers, status: 200 });
+}
+
+function createErrorResponse(error, code = 400) {
+  return new Response(
+    JSON.stringify({
+      status: false,
+      error: error,
+      code: code
+    }),
+    {
+      status: code,
+      headers: {
+        "Content-Type": "application/json",
+        ...CUSTOM_HEADERS
+      }
+    }
+  );
+}
+
+async function handleGet(request) {
+  const url = new URL(request.url);
+  const prompt = url.searchParams.get("prompt");
+
+  if (!prompt) {
+    return createErrorResponse("Parameter 'prompt' is required", 400);
+  }
+
+  if (typeof prompt !== "string" || prompt.trim().length === 0) {
+    return createErrorResponse("Parameter 'prompt' must be a non-empty string", 400);
+  }
+
+  if (prompt.length > 1000) {
+    return createErrorResponse("Parameter 'prompt' must be less than 1000 characters", 400);
+  }
+
+  try {
+    const result = await scrapeImage(prompt.trim());
+    return createImageResponse(result);
+  } catch (error) {
+    return createErrorResponse(error.message || "Internal Server Error", 500);
+  }
+}
+
+async function handlePost(request) {
+  let body;
+  
+  try {
+    body = await request.json();
+  } catch (e) {
+    return createErrorResponse("Invalid JSON in request body", 400);
+  }
+
+  const { prompt } = body || {};
+
+  if (!prompt) {
+    return createErrorResponse("Parameter 'prompt' is required", 400);
+  }
+
+  if (typeof prompt !== "string" || prompt.trim().length === 0) {
+    return createErrorResponse("Parameter 'prompt' must be a non-empty string", 400);
+  }
+
+  if (prompt.length > 1000) {
+    return createErrorResponse("Parameter 'prompt' must be less than 1000 characters", 400);
+  }
+
+  try {
+    const result = await scrapeImage(prompt.trim());
+    return createImageResponse(result);
+  } catch (error) {
+    return createErrorResponse(error.message || "Internal Server Error", 500);
+  }
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    if (path === "/api/ai/magicstudio") {
+      if (request.method === "GET") {
+        return await handleGet(request);
+      } else if (request.method === "POST") {
+        return await handlePost(request);
+      } else {
+        return createErrorResponse("Method not allowed", 405);
+      }
+    }
+
+    if (path === "/" || path === "") {
+      return new Response(
+        JSON.stringify({
+          name: "Magic Studio AI Art Generator API",
+          Creator: "Ashlynn Repository",
+          version: "1.0.0",
+          endpoints: [
+            {
+              method: "GET",
+              path: "/api/ai/magicstudio",
+              description: "Generate AI art from a text prompt using query parameters",
+              parameters: {
+                prompt: "Text prompt for AI art generation (required, max 1000 characters)"
+              },
+              example: "/api/ai/magicstudio?prompt=portrait%20of%20a%20wizard%20with%20a%20long%20beard"
+            },
+            {
+              method: "POST",
+              path: "/api/ai/magicstudio",
+              description: "Generate AI art from a text prompt using JSON body",
+              body: {
+                prompt: "Text prompt for AI art generation (required, max 1000 characters)"
+              },
+              example: {
+                prompt: "portrait of a wizard with a long beard"
+              }
             }
-        } else {
-            imageUrls[`image_url_${i+1}`] = null;
+          ]
+        }, null, 2),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            ...CUSTOM_HEADERS
+          }
         }
-    }
-    return imageUrls;
-}
-
-serve(async (req) => {
-    const url = new URL(req.url);
-    const prompt = url.searchParams.get('prompt');
-    const imageNumber = parseInt(url.searchParams.get('image') || "0", 10);
-
-    if (!prompt || !imageNumber || imageNumber < 1) {
-        return new Response(JSON.stringify({ error: 'Invalid parameters', usage: '?prompt=TEXT&image=NUMBER', developer: CREDIT_OWNER, contact: CREDIT_CHANNEL }, null, 2), { status: 400, headers: { 'Content-Type': 'application/json' } });
+      );
     }
 
-    try {
-        const turboToken = await fetchTurboToken();
-        if (!turboToken) return new Response(JSON.stringify({ error: 'Turbo token fetch failed', developer: CREDIT_OWNER, contact: CREDIT_CHANNEL }, null, 500), { status: 500, headers: { 'Content-Type': 'application/json' } });
-
-        const images = await fetchAndDisplayImages(prompt, imageNumber, turboToken);
-        return new Response(JSON.stringify({ ...images, metadata: { developer: CREDIT_OWNER, channel: CREDIT_CHANNEL, generated_at: new Date().toISOString() } }, null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    } catch (err) {
-        return new Response(JSON.stringify({ error: 'Unexpected error', message: err.message, developer: CREDIT_OWNER, contact: CREDIT_CHANNEL, timestamp: new Date().toISOString() }, null, 2), { status: 500, headers: { 'Content-Type': 'application/json' } });
-    }
-});
+    // 404 for unknown routes
+    return createErrorResponse("Not Found", 404);
+  }
+};
