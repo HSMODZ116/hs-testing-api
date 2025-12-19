@@ -1,227 +1,185 @@
-// Made by Ashlynn Repository
-// Hosted on Cloudflare Workers
-// Repository: https://t.me/Ashlynn_Repository
-// Magic Studio AI Art Generator API
-const CUSTOM_HEADERS = {
-  "X-Creator": "https://t.me/Ashlynn_Repository",
-  "X-Powered-By": "Cloudflare Workers"
-};
+/**
+ * ImagePromptGuru Stable API - Cloudflare Workers
+ * ONLY working & safe features
+ */
 
-function generateClientId() {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
+const BASE_URL = "https://api.imagepromptguru.net";
 
-function generateUUID() {
-  return crypto.randomUUID();
-}
+// --------- Utils ---------
 
-function createFormData(prompt) {
-  const boundary = `----WebKitFormBoundary${Math.random().toString(36).substring(2)}`;
-  const parts = [];
-  
-  const fields = {
-    prompt: prompt,
-    output_format: "bytes",
-    user_profile_id: "null",
-    anonymous_user_id: generateUUID(),
-    request_timestamp: (Date.now() / 1000).toFixed(3),
-    user_is_subscribed: "false",
-    client_id: generateClientId()
-  };
-
-  for (const [key, value] of Object.entries(fields)) {
-    parts.push(
-      `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="${key}"\r\n\r\n` +
-      `${value}\r\n`
-    );
-  }
-
-  parts.push(`--${boundary}--\r\n`);
-  
+function getCORSHeaders() {
   return {
-    body: parts.join(''),
-    contentType: `multipart/form-data; boundary=${boundary}`
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400"
   };
 }
 
-async function scrapeImage(prompt) {
-  const formData = createFormData(prompt);
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      ...getCORSHeaders()
+    }
+  });
+}
 
+function arrayBufferToBase64(buffer) {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunk = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function isValidImageUrl(url) {
   try {
-    const response = await fetch(
-      "https://ai-api.magicstudio.com/api/ai-art-generator",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": formData.contentType,
-          "accept": "application/json, text/plain, */*",
-          "origin": "https://magicstudio.com",
-          "referer": "https://magicstudio.com/ai-art-generator/",
-          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0"
-        },
-        body: formData.body
-      }
-    );
+    const u = new URL(url);
+    return ["http:", "https:"].includes(u.protocol);
+  } catch {
+    return false;
+  }
+}
 
-    if (!response.ok) {
-      throw new Error(`API returned status ${response.status}`);
+// --------- Core API ---------
+
+class ImagePromptGuru {
+  constructor() {
+    this.headers = {
+      "Content-Type": "application/json",
+      "User-Agent": "Mozilla/5.0"
+    };
+  }
+
+  async imageToPrompt(imageUrl, lang = "en") {
+    if (!isValidImageUrl(imageUrl)) {
+      throw new Error("Invalid image URL");
     }
 
-    return await response.arrayBuffer();
-  } catch (error) {
-    console.error("API Error:", error.message);
-    throw new Error(`Failed to get response from API: ${error.message}`);
-  }
-}
+    const imgRes = await fetch(imageUrl);
+    if (!imgRes.ok) throw new Error("Failed to download image");
 
-function createImageResponse(buffer, filename = null) {
-  const headers = {
-    "Content-Type": "image/jpeg",
-    "Content-Length": buffer.byteLength.toString(),
-    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-    "Pragma": "no-cache",
-    "Expires": "0",
-    ...CUSTOM_HEADERS
-  };
-
-  if (filename) {
-    headers["Content-Disposition"] = `inline; filename="${filename}"`;
-  }
-
-  return new Response(buffer, { headers, status: 200 });
-}
-
-function createErrorResponse(error, code = 400) {
-  return new Response(
-    JSON.stringify({
-      status: false,
-      error: error,
-      code: code
-    }),
-    {
-      status: code,
-      headers: {
-        "Content-Type": "application/json",
-        ...CUSTOM_HEADERS
-      }
+    const type = imgRes.headers.get("content-type") || "";
+    if (!type.startsWith("image/")) {
+      throw new Error("URL is not an image");
     }
-  );
-}
 
-async function handleGet(request) {
-  const url = new URL(request.url);
-  const prompt = url.searchParams.get("prompt");
+    const buffer = await imgRes.arrayBuffer();
+    if (buffer.byteLength > 5 * 1024 * 1024) {
+      throw new Error("Image too large (max 5MB)");
+    }
 
-  if (!prompt) {
-    return createErrorResponse("Parameter 'prompt' is required", 400);
+    const base64 = arrayBufferToBase64(buffer);
+    const payload = {
+      image: `data:${type};base64,${base64}`,
+      language: lang
+    };
+
+    const res = await fetch(`${BASE_URL}/image-to-prompt`, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      throw new Error("ImagePromptGuru API failed");
+    }
+
+    const data = await res.json();
+    return data.prompt || data.result || data.text || "";
   }
 
-  if (typeof prompt !== "string" || prompt.trim().length === 0) {
-    return createErrorResponse("Parameter 'prompt' must be a non-empty string", 400);
-  }
+  async textToPrompt(text, lang = "en") {
+    if (!text || !text.trim()) {
+      throw new Error("Text is required");
+    }
 
-  if (prompt.length > 1000) {
-    return createErrorResponse("Parameter 'prompt' must be less than 1000 characters", 400);
-  }
+    const payload = {
+      text: text.trim(),
+      language: lang
+    };
 
-  try {
-    const result = await scrapeImage(prompt.trim());
-    return createImageResponse(result);
-  } catch (error) {
-    return createErrorResponse(error.message || "Internal Server Error", 500);
-  }
-}
+    const res = await fetch(`${BASE_URL}/text-to-prompt`, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify(payload)
+    });
 
-async function handlePost(request) {
-  let body;
-  
-  try {
-    body = await request.json();
-  } catch (e) {
-    return createErrorResponse("Invalid JSON in request body", 400);
-  }
+    if (!res.ok) {
+      throw new Error("ImagePromptGuru API failed");
+    }
 
-  const { prompt } = body || {};
-
-  if (!prompt) {
-    return createErrorResponse("Parameter 'prompt' is required", 400);
-  }
-
-  if (typeof prompt !== "string" || prompt.trim().length === 0) {
-    return createErrorResponse("Parameter 'prompt' must be a non-empty string", 400);
-  }
-
-  if (prompt.length > 1000) {
-    return createErrorResponse("Parameter 'prompt' must be less than 1000 characters", 400);
-  }
-
-  try {
-    const result = await scrapeImage(prompt.trim());
-    return createImageResponse(result);
-  } catch (error) {
-    return createErrorResponse(error.message || "Internal Server Error", 500);
+    const data = await res.json();
+    return data.prompt || data.result || data.text || "";
   }
 }
+
+// --------- Worker ---------
 
 export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    const path = url.pathname;
-    if (path === "/api/ai/magicstudio") {
-      if (request.method === "GET") {
-        return await handleGet(request);
-      } else if (request.method === "POST") {
-        return await handlePost(request);
-      } else {
-        return createErrorResponse("Method not allowed", 405);
-      }
+  async fetch(req) {
+    if (req.method === "OPTIONS") {
+      return new Response(null, { headers: getCORSHeaders() });
     }
 
-    if (path === "/" || path === "") {
-      return new Response(
-        JSON.stringify({
-          name: "Magic Studio AI Art Generator API",
-          Creator: "Ashlynn Repository",
-          version: "1.0.0",
-          endpoints: [
-            {
-              method: "GET",
-              path: "/api/ai/magicstudio",
-              description: "Generate AI art from a text prompt using query parameters",
-              parameters: {
-                prompt: "Text prompt for AI art generation (required, max 1000 characters)"
-              },
-              example: "/api/ai/magicstudio?prompt=portrait%20of%20a%20wizard%20with%20a%20long%20beard"
-            },
-            {
-              method: "POST",
-              path: "/api/ai/magicstudio",
-              description: "Generate AI art from a text prompt using JSON body",
-              body: {
-                prompt: "Text prompt for AI art generation (required, max 1000 characters)"
-              },
-              example: {
-                prompt: "portrait of a wizard with a long beard"
-              }
-            }
-          ]
-        }, null, 2),
-        {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-            ...CUSTOM_HEADERS
-          }
+    try {
+      const url = new URL(req.url);
+      const api = new ImagePromptGuru();
+
+      // IMAGE → PROMPT
+      if (url.pathname === "/image") {
+        const imageUrl = url.searchParams.get("imageUrl");
+        const lang = url.searchParams.get("lang") || "en";
+
+        if (!imageUrl) {
+          return json({ error: "imageUrl is required" }, 400);
         }
-      );
-    }
 
-    // 404 for unknown routes
-    return createErrorResponse("Not Found", 404);
+        const prompt = await api.imageToPrompt(imageUrl, lang);
+        return json({
+          success: true,
+          type: "image",
+          prompt,
+          length: prompt.length
+        });
+      }
+
+      // TEXT → PROMPT
+      if (url.pathname === "/text") {
+        const text = url.searchParams.get("text");
+        const lang = url.searchParams.get("lang") || "en";
+
+        if (!text) {
+          return json({ error: "text is required" }, 400);
+        }
+
+        const prompt = await api.textToPrompt(text, lang);
+        return json({
+          success: true,
+          type: "text",
+          prompt,
+          length: prompt.length
+        });
+      }
+
+      return json({
+        message: "ImagePromptGuru API",
+        endpoints: {
+          "/image?imageUrl=URL": "Image to Prompt",
+          "/text?text=TEXT": "Text to Prompt"
+        }
+      });
+
+    } catch (e) {
+      return json({
+        success: false,
+        error: e.message
+      }, 500);
+    }
   }
 };
