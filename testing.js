@@ -1,6 +1,7 @@
 /**
  * Complete ImagePromptGuru API - Cloudflare Workers
  * Supports both Image to Prompt and Text to Prompt
+ * Developer: Haseeb Sahil
  * Made for hs-testing-api.deno.dev
  */
 
@@ -10,31 +11,22 @@ class CompletePromptAPI {
     this.defaultHeaders = {
       "accept": "*/*",
       "accept-language": "en-US,en;q=0.9",
-      "cache-control": "no-cache",
       "content-type": "application/json",
       "origin": "https://imagepromptguru.net",
-      "pragma": "no-cache",
-      "priority": "u=1, i",
       "referer": "https://imagepromptguru.net/",
-      "sec-ch-ua": '"Chromium";v="120", "Not A(Brand";v="99", "Google Chrome";v="120"',
-      "sec-ch-ua-mobile": "?0",
-      "sec-ch-ua-platform": '"Windows"',
-      "sec-fetch-dest": "empty",
-      "sec-fetch-mode": "cors",
-      "sec-fetch-site": "same-site",
       "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     };
     
-    // Supported models from website
+    // Working models
     this.supportedModels = ['general', 'midjourney', 'dalle', 'stable_diffusion', 'flux'];
     
-    // Supported styles from website
+    // Working styles
     this.supportedStyles = [
       'general', 'photorealistic', 'ghibli', 'cyberpunk', 
       'fantasy', 'anime', 'watercolor', 'oil_painting', 'steampunk'
     ];
     
-    // Supported languages
+    // Working languages
     this.supportedLanguages = [
       'en', 'es', 'zh', 'zh-TW', 'fr', 'de', 'ja', 'ru', 
       'pt', 'ar', 'ko', 'it', 'nl', 'tr', 'pl', 'vi', 'th', 'hi', 'id'
@@ -67,12 +59,11 @@ class CompletePromptAPI {
   async downloadImageAsBase64(imageUrl) {
     try {
       const response = await fetch(imageUrl, {
-        headers: { 'User-Agent': this.defaultHeaders['user-agent'] },
-        cf: { cacheTtl: 60 } // Cache for 60 seconds
+        headers: { 'User-Agent': this.defaultHeaders['user-agent'] }
       });
 
       if (!response.ok) {
-        throw new Error(`Image download failed: ${response.status} ${response.statusText}`);
+        throw new Error(`Image download failed: ${response.status}`);
       }
 
       const contentType = response.headers.get('content-type');
@@ -82,20 +73,13 @@ class CompletePromptAPI {
         throw new Error(`Invalid image type: ${contentType || 'unknown'}. Supported: JPEG, PNG, WEBP, GIF`);
       }
 
-      const contentLength = response.headers.get('content-length');
-      const maxSize = 5 * 1024 * 1024; // 5MB
-      
-      if (contentLength && parseInt(contentLength) > maxSize) {
-        throw new Error(`Image too large: ${Math.round(contentLength / 1024 / 1024)}MB. Max 5MB allowed.`);
-      }
-
       const arrayBuffer = await response.arrayBuffer();
       const base64Data = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
 
       return {
         base64Data,
         mimeType: contentType,
-        size: contentLength ? parseInt(contentLength) : arrayBuffer.byteLength
+        size: arrayBuffer.byteLength
       };
     } catch (error) {
       throw new Error(`Image processing failed: ${error.message}`);
@@ -136,14 +120,7 @@ class CompletePromptAPI {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      let errorData;
-      try {
-        errorData = JSON.parse(errorText);
-      } catch {
-        errorData = { message: errorText || 'Unknown error' };
-      }
-      throw new Error(`Image API failed: ${response.status} - ${errorData.message || errorData.error || 'Unknown error'}`);
+      throw new Error(`API failed: ${response.status}`);
     }
 
     const data = await response.json();
@@ -190,14 +167,7 @@ class CompletePromptAPI {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      let errorData;
-      try {
-        errorData = JSON.parse(errorText);
-      } catch {
-        errorData = { message: errorText || 'Unknown error' };
-      }
-      throw new Error(`Text API failed: ${response.status} - ${errorData.message || errorData.error || 'Unknown error'}`);
+      throw new Error(`API failed: ${response.status}`);
     }
 
     const data = await response.json();
@@ -224,9 +194,10 @@ class CompletePromptAPI {
       });
       
       return {
-        status: 'online',
+        status: response.ok ? 'online' : 'offline',
         baseUrl: this.baseUrl,
         timestamp: new Date().toISOString(),
+        developer: "Haseeb Sahil",
         supportedFeatures: {
           imageToPrompt: true,
           textToPrompt: true,
@@ -239,7 +210,8 @@ class CompletePromptAPI {
       return {
         status: 'offline',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        developer: "Haseeb Sahil"
       };
     }
   }
@@ -249,12 +221,9 @@ class CompletePromptAPI {
 function getCORSHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
-    'Access-Control-Max-Age': '86400',
-    'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'DENY',
-    'X-XSS-Protection': '1; mode=block'
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Max-Age': '86400'
   };
 }
 
@@ -265,63 +234,41 @@ function handleCORSPreflight(request) {
   });
 }
 
-function jsonResponse(data, status = 200, additionalHeaders = {}) {
+function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      ...getCORSHeaders(),
-      ...additionalHeaders
+      ...getCORSHeaders()
     }
   });
 }
 
-function errorResponse(message, status = 400, details = {}) {
+function errorResponse(message, status = 400) {
   return jsonResponse({
     success: false,
     error: message,
     timestamp: new Date().toISOString(),
-    ...details
+    developer: "Haseeb Sahil"
   }, status);
 }
 
 async function extractParams(request) {
   const url = new URL(request.url);
-  const endpoint = url.pathname.split('/').filter(Boolean)[0] || 'api';
   
   if (request.method === 'GET') {
     const params = {};
     url.searchParams.forEach((value, key) => {
       params[key] = value;
     });
-    return { endpoint, ...params };
+    return params;
   } else if (request.method === 'POST') {
     try {
       const contentType = request.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
-        const body = await request.json();
-        return { endpoint, ...body };
-      } else if (contentType.includes('application/x-www-form-urlencoded')) {
-        const formData = await request.formData();
-        const body = {};
-        for (const [key, value] of formData.entries()) {
-          body[key] = value;
-        }
-        return { endpoint, ...body };
-      } else if (contentType.includes('multipart/form-data')) {
-        const formData = await request.formData();
-        const body = {};
-        for (const [key, value] of formData.entries()) {
-          body[key] = value instanceof File ? {
-            name: value.name,
-            type: value.type,
-            size: value.size,
-            content: await value.text()
-          } : value;
-        }
-        return { endpoint, ...body };
+        return await request.json();
       }
-      throw new Error('Unsupported content type');
+      throw new Error('Unsupported content type. Use application/json');
     } catch (error) {
       throw new Error(`Invalid request body: ${error.message}`);
     }
@@ -330,50 +277,31 @@ async function extractParams(request) {
   throw new Error('Method not allowed');
 }
 
-// Rate limiting
-class RateLimiter {
-  constructor(limit = 100, windowMs = 60000) {
-    this.limit = limit;
-    this.windowMs = windowMs;
-    this.hits = new Map();
-  }
+// Simple rate limiting
+const requestCounts = new Map();
 
-  check(ip) {
-    const now = Date.now();
-    const windowStart = now - this.windowMs;
-    
-    // Clean old entries
-    for (const [key, timestamp] of this.hits.entries()) {
-      if (timestamp < windowStart) {
-        this.hits.delete(key);
-      }
-    }
-    
-    const hitsInWindow = Array.from(this.hits.values())
-      .filter(timestamp => timestamp >= windowStart)
-      .length;
-    
-    if (hitsInWindow >= this.limit) {
-      return false;
-    }
-    
-    this.hits.set(ip, now);
-    return true;
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const windowStart = now - 60000; // 1 minute
+  
+  if (!requestCounts.has(ip)) {
+    requestCounts.set(ip, []);
   }
-
-  remaining(ip) {
-    const now = Date.now();
-    const windowStart = now - this.windowMs;
-    
-    const hitsInWindow = Array.from(this.hits.values())
-      .filter(timestamp => timestamp >= windowStart)
-      .length;
-    
-    return Math.max(0, this.limit - hitsInWindow);
+  
+  const requests = requestCounts.get(ip);
+  
+  // Clean old requests
+  const recentRequests = requests.filter(time => time > windowStart);
+  requestCounts.set(ip, recentRequests);
+  
+  // Check limit (100 requests per minute)
+  if (recentRequests.length >= 100) {
+    return false;
   }
+  
+  recentRequests.push(now);
+  return true;
 }
-
-const rateLimiter = new RateLimiter(100, 60000); // 100 requests per minute
 
 // Main handler
 export default {
@@ -384,17 +312,14 @@ export default {
         return handleCORSPreflight(request);
       }
 
-      // Get client IP for rate limiting
-      const clientIP = request.headers.get('cf-connecting-ip') || 
-                      request.headers.get('x-forwarded-for') || 
-                      'unknown';
+      // Get client IP
+      const clientIP = request.headers.get('cf-connecting-ip') || 'unknown';
       
       // Apply rate limiting
-      if (!rateLimiter.check(clientIP)) {
+      if (!checkRateLimit(clientIP)) {
         return errorResponse(
           'Rate limit exceeded. Please try again later.',
-          429,
-          { retryAfter: 60, remaining: 0 }
+          429
         );
       }
 
@@ -406,6 +331,7 @@ export default {
         return jsonResponse({
           message: 'ImagePromptGuru API',
           version: '1.0.0',
+          developer: 'Haseeb Sahil',
           endpoints: {
             '/image': 'Image to Prompt (GET/POST)',
             '/text': 'Text to Prompt (GET/POST)',
@@ -418,11 +344,6 @@ export default {
             image: 'GET /image?imageUrl=URL&model=general&lang=en',
             text: 'GET /text?text=YOUR_TEXT&model=general&lang=en&style=general',
             post: 'POST with JSON body { "imageUrl": "...", "text": "...", "model": "...", "lang": "...", "style": "..." }'
-          },
-          rateLimit: {
-            limit: 100,
-            window: '60 seconds',
-            remaining: rateLimiter.remaining(clientIP)
           },
           timestamp: new Date().toISOString()
         });
@@ -439,6 +360,7 @@ export default {
         return jsonResponse({
           models: api.supportedModels,
           default: 'general',
+          developer: 'Haseeb Sahil',
           timestamp: new Date().toISOString()
         });
       }
@@ -448,6 +370,7 @@ export default {
         return jsonResponse({
           languages: api.supportedLanguages,
           default: 'en',
+          developer: 'Haseeb Sahil',
           timestamp: new Date().toISOString()
         });
       }
@@ -457,6 +380,7 @@ export default {
         return jsonResponse({
           styles: api.supportedStyles,
           default: 'general',
+          developer: 'Haseeb Sahil',
           timestamp: new Date().toISOString()
         });
       }
@@ -470,11 +394,7 @@ export default {
         const params = await extractParams(request);
         
         if (!params.imageUrl && !params.image) {
-          return errorResponse('Missing required parameter: imageUrl or image', 400, {
-            required: ['imageUrl'],
-            optional: ['model', 'lang'],
-            example: '?imageUrl=https://example.com/image.jpg&model=midjourney&lang=en'
-          });
+          return errorResponse('Missing required parameter: imageUrl', 400);
         }
 
         const imageUrl = params.imageUrl || params.image;
@@ -493,17 +413,9 @@ export default {
               length: result.prompt.length,
               timestamp: new Date().toISOString()
             },
-            metadata: {
-              endpoint: 'image-to-prompt',
-              processingTime: result.details.processingTime || 'unknown',
-              rateLimit: {
-                remaining: rateLimiter.remaining(clientIP),
-                resetIn: 60
-              }
-            }
+            developer: 'Haseeb Sahil'
           });
         } catch (error) {
-          console.error('Image processing error:', error);
           return errorResponse(error.message, 400);
         }
       }
@@ -517,11 +429,7 @@ export default {
         const params = await extractParams(request);
         
         if (!params.text && !params.prompt) {
-          return errorResponse('Missing required parameter: text', 400, {
-            required: ['text'],
-            optional: ['model', 'lang', 'style'],
-            example: '?text=a beautiful sunset&style=ghibli&lang=ja'
-          });
+          return errorResponse('Missing required parameter: text', 400);
         }
 
         const text = params.text || params.prompt;
@@ -542,80 +450,23 @@ export default {
               length: result.prompt.length,
               timestamp: new Date().toISOString()
             },
-            metadata: {
-              endpoint: 'text-to-prompt',
-              processingTime: result.details.processingTime || 'unknown',
-              rateLimit: {
-                remaining: rateLimiter.remaining(clientIP),
-                resetIn: 60
-              }
-            }
+            developer: 'Haseeb Sahil'
           });
         } catch (error) {
-          console.error('Text processing error:', error);
           return errorResponse(error.message, 400);
         }
       }
 
-      // Batch processing endpoint
-      if (url.pathname === '/batch') {
-        if (request.method !== 'POST') {
-          return errorResponse('Method not allowed. Use POST.', 405);
-        }
-
-        const body = await request.json();
-        
-        if (!Array.isArray(body.requests)) {
-          return errorResponse('Missing or invalid "requests" array in body', 400);
-        }
-
-        if (body.requests.length > 10) {
-          return errorResponse('Maximum 10 requests per batch', 400);
-        }
-
-        const results = [];
-        for (const req of body.requests) {
-          try {
-            if (req.type === 'image') {
-              const result = await api.getImagePrompt(req);
-              results.push({ success: true, type: 'image', data: result });
-            } else if (req.type === 'text') {
-              const result = await api.getTextPrompt(req);
-              results.push({ success: true, type: 'text', data: result });
-            } else {
-              results.push({ success: false, error: 'Invalid request type' });
-            }
-          } catch (error) {
-            results.push({ success: false, error: error.message });
-          }
-        }
-
-        return jsonResponse({
-          success: true,
-          batchId: Date.now().toString(36),
-          processed: results.length,
-          results,
-          timestamp: new Date().toISOString()
-        });
-      }
-
       // 404 - Endpoint not found
       return errorResponse(
-        'Endpoint not found. Available endpoints: /image, /text, /status, /models, /languages, /styles',
+        'Endpoint not found. Available: /image, /text, /status, /models, /languages, /styles',
         404
       );
 
     } catch (error) {
-      console.error('Global error:', error);
-      
       return errorResponse(
         'Internal server error',
-        500,
-        { 
-          message: error.message,
-          timestamp: new Date().toISOString(),
-          requestId: crypto.randomUUID()
-        }
+        500
       );
     }
   }
