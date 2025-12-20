@@ -73,7 +73,7 @@ export default {
             return new Response(JSON.stringify({
                 success: false,
                 error: 'Invalid number format',
-                number: searchNumber,
+                query: searchNumber,
                 valid_formats: {
                     jazz: '0300-0309, 0320-0329',
                     telenor: '0340-0349',
@@ -106,10 +106,8 @@ export default {
                     number: apiData.data.mobile || searchNumber,
                     name: apiData.data.name || '',
                     cnic: apiData.data.cnic || '',
-                    address: apiData.data.address || '',
-                    network: network,
-                    developer: 'Haseeb Sahil',
-                    credit: '@hsmodzofc2'
+                    address: apiData.data.address || '', // ✅ AS-IS
+                    network: network
                 }];
             } 
             else if (provider === 'Zong' || provider === 'Ufone') {
@@ -118,10 +116,8 @@ export default {
                     number: record.number || searchNumber,
                     name: record.name || '',
                     cnic: record.cnic || '',
-                    address: record.address || '',
-                    network: network,
-                    developer: 'Haseeb Sahil',
-                    credit: '@hsmodzofc2'
+                    address: record.address || '', // ✅ AS-IS
+                    network: network
                 }));
             } 
             else if (provider === 'Jazz' || provider === 'CNIC') {
@@ -130,47 +126,102 @@ export default {
                     number: record.mobile || searchNumber,
                     name: record.name || '',
                     cnic: record.cnic || '',
-                    address: record.address || '',
-                    network: network,
-                    developer: 'Haseeb Sahil',
-                    credit: '@hsmodzofc2'
+                    address: record.address || '', // ✅ AS-IS
+                    network: provider === 'CNIC' ? 'Multiple' : network
                 }));
             }
 
-            // Final response in STANDARD format
-            return new Response(JSON.stringify({
-                success: true,
-                network: network,
-                number: searchNumber,
-                timestamp: new Date().toISOString(),
-                data: standardizedData,
-                count: standardizedData.length,
-                message: standardizedData.length > 0 ? 
-                    'Data retrieved successfully' : 
-                    'No records found',
-                developer: 'Haseeb Sahil',
-                credit: '@hsmodzofc2'
-            }, null, 2), {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Cache-Control': 'max-age=300'
+            // 🎨 "For General Use" STYLE RESPONSE
+            if (standardizedData.length > 0) {
+                // Multiple records (CNIC case) ke liye array format
+                if (provider === 'CNIC' && standardizedData.length > 1) {
+                    return new Response(JSON.stringify({
+                        success: true,
+                        query: searchNumber,
+                        type: 'cnic_lookup',
+                        results: standardizedData.map(record => ({
+                            name: record.name,
+                            cnic: record.cnic,
+                            address: record.address, // ✅ AS-IS (no formatting)
+                            network: record.network,
+                            number: record.number
+                        })),
+                        count: standardizedData.length,
+                        meta: {
+                            timestamp: new Date().toISOString(),
+                            developer: 'Haseeb Sahil',
+                            credit: '@hsmodzofc2',
+                            note: 'CNIC may have multiple mobile numbers'
+                        }
+                    }, null, 2), {
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Cache-Control': 'max-age=300'
+                        }
+                    });
+                } 
+                else {
+                    // Single record (normal mobile number) ke liye
+                    const mainRecord = standardizedData[0];
+                    
+                    return new Response(JSON.stringify({
+                        success: true,
+                        query: searchNumber,
+                        result: {
+                            name: mainRecord.name,
+                            cnic: mainRecord.cnic,
+                            address: mainRecord.address, // ✅ AS-IS (no formatting)
+                            network: mainRecord.network
+                        },
+                        meta: {
+                            timestamp: new Date().toISOString(),
+                            developer: 'Haseeb Sahil',
+                            credit: '@hsmodzofc2'
+                        }
+                    }, null, 2), {
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Cache-Control': 'max-age=300'
+                        }
+                    });
                 }
-            });
+            } else {
+                // No records found
+                return new Response(JSON.stringify({
+                    success: true,
+                    query: searchNumber,
+                    result: null,
+                    message: 'No records found for this number',
+                    meta: {
+                        timestamp: new Date().toISOString(),
+                        developer: 'Haseeb Sahil',
+                        credit: '@hsmodzofc2'
+                    }
+                }, null, 2), {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Cache-Control': 'max-age=300'
+                    }
+                });
+            }
 
         } catch (error) {
-            // Error handling
+            // Error handling in same style
             return new Response(JSON.stringify({
                 success: false,
+                query: searchNumber,
                 error: 'Failed to fetch data',
-                network: network,
-                number: searchNumber,
                 message: error.message,
-                developer: 'Haseeb Sahil',
-                credit: '@hsmodzofc2'
+                meta: {
+                    timestamp: new Date().toISOString(),
+                    developer: 'Haseeb Sahil',
+                    credit: '@hsmodzofc2'
+                }
             }, null, 2), {
                 status: 502,
                 headers: { 'Content-Type': 'application/json' }
             });
         }
     }
+    // ❌ formatAddress function REMOVED
 };
