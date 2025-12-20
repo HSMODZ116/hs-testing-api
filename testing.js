@@ -56,8 +56,8 @@ export default {
             provider = 'Zong';
             apiUrl = `https://ahmadmodstools.online/PublicApis/SimDataBase.php?num=${searchNumber}`;
         }
-        // 5. Ufone (0330-0331)
-        else if (/^033[0-1]\d+$/.test(searchNumber)) {
+        // 5. Ufone (0330-0339) - ✅ UPDATED
+        else if (/^033[0-9]\d+$/.test(searchNumber)) {
             provider = 'Ufone';
             apiUrl = `https://ahmadmodstools.online/PublicApis/SimDataBase.php?num=${searchNumber}`;
         }
@@ -70,7 +70,7 @@ export default {
                     jazz: '0300-0309, 0320-0329',
                     telenor: '0340-0349',
                     zong: '0310-0319',
-                    ufone: '0330-0331',
+                    ufone: '0330-0339', // ✅ UPDATED
                     cnic: '13 digits only'
                 }
             }), {
