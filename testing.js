@@ -36,30 +36,36 @@ export default {
         // Provider identification logic
         let apiUrl = '';
         let provider = '';
+        let network = '';
 
         // 1. CNIC - 13 digits only
         if (/^\d{13}$/.test(searchNumber)) {
             provider = 'CNIC';
+            network = 'Multiple';
             apiUrl = `https://jazz-cnic-database-api.haseeb-sahil.workers.dev/?num=${searchNumber}`;
         }
         // 2. Jazz (0300-0309, 0320-0329)
         else if (/^03(0[0-9]|2[0-9])\d+$/.test(searchNumber)) {
             provider = 'Jazz';
+            network = 'Jazz';
             apiUrl = `https://jazz-cnic-database-api.haseeb-sahil.workers.dev/?num=${searchNumber}`;
         }
         // 3. Telenor (0340-0349)
         else if (/^034[0-9]\d+$/.test(searchNumber)) {
             provider = 'Telenor';
+            network = 'Telenor';
             apiUrl = `https://telenor-database-api.haseeb-sahil.workers.dev/?num=${searchNumber}`;
         }
         // 4. Zong (0310-0319)
         else if (/^031[0-9]\d+$/.test(searchNumber)) {
             provider = 'Zong';
+            network = 'Zong';
             apiUrl = `https://ahmadmodstools.online/PublicApis/SimDataBase.php?num=${searchNumber}`;
         }
         // 5. Ufone (0330-0339)
         else if (/^033[0-9]\d+$/.test(searchNumber)) {
             provider = 'Ufone';
+            network = 'Ufone';
             apiUrl = `https://ahmadmodstools.online/PublicApis/SimDataBase.php?num=${searchNumber}`;
         }
         // Invalid number
@@ -104,8 +110,9 @@ export default {
                     address: apiData.data.address || '',
                     status: 'Active',
                     country: 'Pakistan',
-                    network: apiData.data.network || provider,
-                    developer: apiData.data.developer || ''
+                    network: network, // ✅ Network added
+                    developer: 'Haseeb Sahil', // ✅ Default developer
+                    credit: '@hsmodzofc2' // ✅ Default credit
                 }];
             } 
             else if (provider === 'Zong' || provider === 'Ufone') {
@@ -118,8 +125,9 @@ export default {
                     address: record.address || '',
                     status: 'Active',
                     country: 'Pakistan',
-                    network: provider,
-                    developer: ''
+                    network: network, // ✅ Network added
+                    developer: 'Haseeb Sahil', // ✅ Default developer
+                    credit: '@hsmodzofc2' // ✅ Default credit
                 }));
             } 
             else if (provider === 'Jazz' || provider === 'CNIC') {
@@ -132,8 +140,9 @@ export default {
                     address: record.address || '',
                     status: record.status || 'Active',
                     country: record.country || 'Pakistan',
-                    network: provider === 'CNIC' ? 'Multiple' : 'Jazz',
-                    developer: ''
+                    network: network, // ✅ Network added (Jazz ya Multiple)
+                    developer: 'Haseeb Sahil', // ✅ Default developer
+                    credit: '@hsmodzofc2' // ✅ Default credit
                 }));
             }
 
@@ -141,13 +150,16 @@ export default {
             return new Response(JSON.stringify({
                 success: true,
                 provider: provider,
+                network: network, // ✅ Top level bhi network
                 number: searchNumber,
                 timestamp: new Date().toISOString(),
                 data: standardizedData,
                 count: standardizedData.length,
                 message: standardizedData.length > 0 ? 
                     'Data retrieved successfully' : 
-                    'No records found'
+                    'No records found',
+                developer: 'Haseeb Sahil', // ✅ Top level developer
+                credit: '@hsmodzofc2' // ✅ Top level credit
             }, null, 2), {
                 headers: {
                     'Content-Type': 'application/json',
@@ -161,8 +173,11 @@ export default {
                 success: false,
                 error: 'Failed to fetch data',
                 provider: provider,
+                network: network, // ✅ Error response mein bhi network
                 number: searchNumber,
-                message: error.message
+                message: error.message,
+                developer: 'Haseeb Sahil', // ✅ Error mein bhi developer
+                credit: '@hsmodzofc2' // ✅ Error mein bhi credit
             }, null, 2), {
                 status: 502,
                 headers: { 'Content-Type': 'application/json' }
