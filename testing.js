@@ -1,10 +1,10 @@
-// Combined API - Pak SIM Owner Details (Phone & CNIC Search)
-// File: jazz-cnic.js
+// Combined API - Pak Sim Owner Details (Phone & CNIC Search)
+// File: worker.js
 
 export default {
   async fetch(request) {
     try {
-      // Handle CORS preflight requests
+      // Handle CORS
       if (request.method === 'OPTIONS') {
         return new Response(null, {
           headers: {
@@ -23,7 +23,7 @@ export default {
         return new Response(JSON.stringify({
           success: false,
           error: 'Not found',
-          message: 'Use endpoint at / with num parameter'
+          message: 'Use Pakistani mobile number starting with 03 or CNIC number'
         }, null, 2), {
           status: 404,
           headers: { 'Content-Type': 'application/json' }
@@ -38,7 +38,7 @@ export default {
         return Response.json({
           success: false,
           error: 'Parameter is required',
-          message: 'Add ?num= parameter with phone or CNIC number'
+          message: 'Use Pakistani mobile number starting with 03 or CNIC number'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
@@ -70,7 +70,7 @@ export default {
         
         result = await fetchData(cleanedNum, 'cnic');
         
-      } else if (cleanedNum.length >= 10 && cleanedNum.length <= 12) {
+      } else if (cleanedNum.length === 10 || cleanedNum.length === 11 || cleanedNum.length === 12) {
         // It's a phone number
         type = 'phone';
         
@@ -100,7 +100,7 @@ export default {
         return Response.json({
           success: false,
           error: 'Invalid input length',
-          message: 'Phone number should be 10-12 digits or CNIC should be 13 digits'
+          message: 'Phone number should be 11 digits (03XXXXXXXXX) or CNIC should be 13 digits'
         }, {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
@@ -109,12 +109,11 @@ export default {
 
       // Return response
       return Response.json({
-        success: result.success,
+        success: true,
         type: type,
         input: cleanedNum,
-        data: result.records,
-        count: result.records ? result.records.length : 0,
-        message: result.message
+        data: result,
+        count: result.records ? result.records.length : 0
       }, {
         headers: {
           'Content-Type': 'application/json',
@@ -139,7 +138,7 @@ export default {
 async function fetchData(number, type) {
   const url = 'https://paksimownerdetails.com/SecureInfo.php';
   
-  // Create form data
+  // Create form data as per website
   const formData = new URLSearchParams();
   formData.append('number', number);
   formData.append('search', 'search');
@@ -148,19 +147,19 @@ async function fetchData(number, type) {
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
         'Content-Type': 'application/x-www-form-urlencoded',
         'Origin': 'https://paksimownerdetails.com',
-        'Referer': 'https://paksimownerdetails.com/'
+        'Referer': 'https://paksimownerdetails.com/',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Upgrade-Insecure-Requests': '1'
       },
       body: formData.toString()
     });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
 
     const html = await response.text();
     return parseHTML(html, number, type);
@@ -177,61 +176,98 @@ async function fetchData(number, type) {
 // ========== HTML PARSER ==========
 function parseHTML(html, number, type) {
   const result = {
-    success: false,
+    success: true,
     records: [],
-    message: 'No data found'
+    message: 'Data retrieved successfully'
   };
 
   // Check if no records found
-  if (html.includes('No record found') || html.includes('No Record Found')) {
+  if (html.includes('No record found') || 
+      html.toLowerCase().includes('not found') ||
+      (html.includes('Sorry') && html.includes('found'))) {
+    result.success = false;
     result.message = type === 'phone' 
       ? 'No records found for this phone number'
       : 'No records found for this CNIC';
     return result;
   }
 
-  // Simple HTML parsing - looking for table structure
+  // Look for table rows
   const rows = [];
-  const tempDiv = document.createElement('div');
-  tempDiv.innerHTML = html;
-  
-  // Find tables
-  const tables = tempDiv.getElementsByTagName('table');
-  
-  for (const table of tables) {
-    const tableRows = table.getElementsByTagName('tr');
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+
+  while ((rowMatch = rowRegex.exec(html))) {
+    rows.push(rowMatch[1]);
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
     
-    for (let i = 0; i < tableRows.length; i++) {
-      const row = tableRows[i];
-      const cells = row.getElementsByTagName('td');
+    // Skip header row
+    if (row.includes('<th>') || row.toLowerCase().includes('mobile') && 
+        row.toLowerCase().includes('name') && row.toLowerCase().includes('cnic')) {
+      continue;
+    }
+
+    // For CNIC search, filter only rows containing the CNIC
+    if (type === 'cnic') {
+      const rowContainsCNIC = row.includes(number) || 
+                             row.includes(formatCNICWithDashes(number));
       
-      // Skip rows with less than 4 cells or header rows
-      if (cells.length < 4 || row.getElementsByTagName('th').length > 0) {
-        continue;
+      if (!rowContainsCNIC) {
+        continue; // Skip rows that don't have this CNIC
       }
+    }
+
+    // Extract cells from row
+    const cells = [];
+    const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+    let cellMatch;
+
+    while ((cellMatch = cellRegex.exec(row))) {
+      let content = cellMatch[1]
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
       
+      // Clean emojis and extra spaces
+      content = content.replace(/[^\x00-\x7F]/g, '').trim();
+      cells.push(content);
+    }
+
+    // We need at least 4 columns: Mobile, Name, CNIC, Address
+    if (cells.length >= 4) {
       const record = {
-        mobile: formatMobile(cells[0]?.textContent || ''),
-        name: (cells[1]?.textContent || '').trim(),
-        cnic: formatCNIC(cells[2]?.textContent || ''),
-        address: (cells[3]?.textContent || '').trim(),
+        mobile: formatMobile(cells[0] || ''),
+        name: cells[1] || '',
+        cnic: formatCNIC(cells[2] || ''),
+        address: cells[3] || '',
         status: 'Active',
         country: 'Pakistan'
       };
 
-      // Validate based on search type
-      if (type === 'phone' && record.mobile === formatMobile(number)) {
-        result.records.push(record);
-      } else if (type === 'cnic' && record.cnic === number) {
-        result.records.push(record);
+      // For phone search, validate the mobile number matches
+      if (type === 'phone') {
+        const formattedSearchNum = formatMobile(number);
+        if (record.mobile === formattedSearchNum) {
+          result.records.push(record);
+        }
+      } else if (type === 'cnic') {
+        // For CNIC search, validate CNIC matches
+        if (formatCNIC(record.cnic) === number) {
+          result.records.push(record);
+        }
       }
     }
   }
 
-  // If we found records, update success status
-  if (result.records.length > 0) {
-    result.success = true;
-    result.message = `Found ${result.records.length} record(s)`;
+  if (result.records.length === 0) {
+    result.success = false;
+    result.message = type === 'phone'
+      ? 'No valid records found for this phone number'
+      : 'No valid records found for this CNIC';
   }
 
   return result;
@@ -258,5 +294,13 @@ function formatCNIC(cnic) {
   if (!cnic) return '';
   
   // Remove all non-digits including hyphens
-  return cnic.replace(/\D/g, '');
+  let cleaned = cnic.replace(/\D/g, '');
+  
+  // Return only digits without any formatting
+  return cleaned;
+}
+
+function formatCNICWithDashes(cnic) {
+  if (!cnic || cnic.length !== 13) return cnic;
+  return cnic.substring(0, 5) + '-' + cnic.substring(5, 12) + '-' + cnic.substring(12);
 }
