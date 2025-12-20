@@ -103,54 +103,44 @@ export default {
             if (provider === 'Telenor') {
                 // Telenor format conversion
                 standardizedData = [{
-                    mobile: apiData.data.mobile || searchNumber,
                     number: apiData.data.mobile || searchNumber,
                     name: apiData.data.name || '',
                     cnic: apiData.data.cnic || '',
                     address: apiData.data.address || '',
-                    status: 'Active',
-                    country: 'Pakistan',
-                    network: network, // ✅ Network added
-                    developer: 'Haseeb Sahil', // ✅ Default developer
-                    credit: '@hsmodzofc2' // ✅ Default credit
+                    network: network,
+                    developer: 'Haseeb Sahil',
+                    credit: '@hsmodzofc2'
                 }];
             } 
             else if (provider === 'Zong' || provider === 'Ufone') {
                 // Zong/Ufone format conversion
                 standardizedData = (apiData.data || []).map(record => ({
-                    mobile: record.number || searchNumber,
                     number: record.number || searchNumber,
                     name: record.name || '',
                     cnic: record.cnic || '',
                     address: record.address || '',
-                    status: 'Active',
-                    country: 'Pakistan',
-                    network: network, // ✅ Network added
-                    developer: 'Haseeb Sahil', // ✅ Default developer
-                    credit: '@hsmodzofc2' // ✅ Default credit
+                    network: network,
+                    developer: 'Haseeb Sahil',
+                    credit: '@hsmodzofc2'
                 }));
             } 
             else if (provider === 'Jazz' || provider === 'CNIC') {
                 // Jazz/CNIC format conversion
                 standardizedData = (apiData.data?.records || []).map(record => ({
-                    mobile: record.mobile || searchNumber,
                     number: record.mobile || searchNumber,
                     name: record.name || '',
                     cnic: record.cnic || '',
                     address: record.address || '',
-                    status: record.status || 'Active',
-                    country: record.country || 'Pakistan',
-                    network: network, // ✅ Network added (Jazz ya Multiple)
-                    developer: 'Haseeb Sahil', // ✅ Default developer
-                    credit: '@hsmodzofc2' // ✅ Default credit
+                    network: network,
+                    developer: 'Haseeb Sahil',
+                    credit: '@hsmodzofc2'
                 }));
             }
 
             // Final response in STANDARD format
             return new Response(JSON.stringify({
                 success: true,
-                provider: provider,
-                network: network, // ✅ Top level bhi network
+                network: network,
                 number: searchNumber,
                 timestamp: new Date().toISOString(),
                 data: standardizedData,
@@ -158,8 +148,8 @@ export default {
                 message: standardizedData.length > 0 ? 
                     'Data retrieved successfully' : 
                     'No records found',
-                developer: 'Haseeb Sahil', // ✅ Top level developer
-                credit: '@hsmodzofc2' // ✅ Top level credit
+                developer: 'Haseeb Sahil',
+                credit: '@hsmodzofc2'
             }, null, 2), {
                 headers: {
                     'Content-Type': 'application/json',
@@ -172,12 +162,11 @@ export default {
             return new Response(JSON.stringify({
                 success: false,
                 error: 'Failed to fetch data',
-                provider: provider,
-                network: network, // ✅ Error response mein bhi network
+                network: network,
                 number: searchNumber,
                 message: error.message,
-                developer: 'Haseeb Sahil', // ✅ Error mein bhi developer
-                credit: '@hsmodzofc2' // ✅ Error mein bhi credit
+                developer: 'Haseeb Sahil',
+                credit: '@hsmodzofc2'
             }, null, 2), {
                 status: 502,
                 headers: { 'Content-Type': 'application/json' }
