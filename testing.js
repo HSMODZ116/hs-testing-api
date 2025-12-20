@@ -1,246 +1,392 @@
+// Combined API - Jazz SIM Owner Details (Phone & CNIC Search)
+// File: jazz-worker.js
+
 export default {
-    async fetch(request, env, ctx) {
-        // CORS headers - For preflight requests
-        const corsHeaders = {
+  async fetch(request) {
+    try {
+      // Handle CORS
+      if (request.method === 'OPTIONS') {
+        return new Response(null, {
+          headers: {
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type',
-            'Access-Control-Max-Age': '86400',
-        };
+          }
+        });
+      }
 
-        // Handle OPTIONS request (preflight)
-        if (request.method === 'OPTIONS') {
-            return new Response(null, {
-                headers: corsHeaders
-            });
-        }
+      const url = new URL(request.url);
+      const path = url.pathname;
 
-        // Sirf GET requests allow karein
-        if (request.method !== 'GET') {
-            return new Response(JSON.stringify({
-                "error": true,
-                "message": "Only GET method is allowed",
-                "fix": "Use GET method instead",
-                "developer": "Haseeb Sahil",
-                "channel": "@hsmodzofc2"
-            }, null, 2), {
-                status: 405,
-                headers: { 
-                    'Content-Type': 'application/json',
-                    ...corsHeaders
-                }
-            });
-        }
+      // Only handle root path
+      if (path !== '/') {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'Not found',
+          message: 'Use Jazz mobile number (0300-0309 or 0320-0329) or CNIC number'
+        }, null, 2), {
+          status: 404,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
+      }
 
-        // URL aur query parameters
-        const url = new URL(request.url);
-        const searchNumber = url.searchParams.get('num');
+      // Get the num parameter
+      const num = url.searchParams.get('num');
 
-        // Number parameter check
-        if (!searchNumber) {
-            return new Response(JSON.stringify({
-                "error": true,
-                "message": "Phone number parameter is missing",
-                "fix": "Use: /?num=03051234567",
-                "examples": ["03051234567", "03451234567", "4220112345678"],
-                "developer": "Haseeb Sahil",
-                "channel": "@hsmodzofc2"
-            }, null, 2), {
-                status: 400,
-                headers: { 
-                    'Content-Type': 'application/json',
-                    ...corsHeaders
-                }
-            });
-        }
+      // If no num parameter
+      if (!num) {
+        return Response.json({
+          success: false,
+          error: 'Parameter is required',
+          message: 'Use Jazz mobile number (0300-0309 or 0320-0329) or CNIC number'
+        }, {
+          status: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
+      }
 
-        // Provider identification logic
-        let apiUrl = '';
-        let provider = '';
-        let network = '';
+      // Clean the input - remove all non-digits
+      const cleanedNum = num.toString().replace(/\D/g, '');
+      
+      let result;
+      let type;
 
-        // 1. CNIC - 13 digits only
-        if (/^\d{13}$/.test(searchNumber)) {
-            provider = 'CNIC';
-            network = 'Multiple';
-            apiUrl = `https://jazz-cnic-database-api.haseeb-sahil.workers.dev/?num=${searchNumber}`;
-        }
-        // 2. Jazz (0300-0309, 0320-0329)
-        else if (/^03(0[0-9]|2[0-9])\d+$/.test(searchNumber)) {
-            provider = 'Jazz';
-            network = 'Jazz';
-            apiUrl = `https://jazz-cnic-database-api.haseeb-sahil.workers.dev/?num=${searchNumber}`;
-        }
-        // 3. Telenor (0340-0349)
-        else if (/^034[0-9]\d+$/.test(searchNumber)) {
-            provider = 'Telenor';
-            network = 'Telenor';
-            apiUrl = `https://telenor-database-api.haseeb-sahil.workers.dev/?num=${searchNumber}`;
-        }
-        // 4. Zong (0310-0319)
-        else if (/^031[0-9]\d+$/.test(searchNumber)) {
-            provider = 'Zong';
-            network = 'Zong';
-            apiUrl = `https://ahmadmodstools.online/PublicApis/SimDataBase.php?num=${searchNumber}`;
-        }
-        // 5. Ufone (0330-0339)
-        else if (/^033[0-9]\d+$/.test(searchNumber)) {
-            provider = 'Ufone';
-            network = 'Ufone';
-            apiUrl = `https://ahmadmodstools.online/PublicApis/SimDataBase.php?num=${searchNumber}`;
-        }
-        // Invalid number - ✅ UPDATED WITH NEW ERROR RESPONSE
-        else {
-            return new Response(JSON.stringify({
-                "invalid_input": true,
-                "description": "Provided input format is incorrect",
-                "expected_pattern": "Pakistan standard formats",
-                "try_these": "Mobile: 03XXXXXXXXX, CNIC: 13 digits",
-                "credits": "Haseeb Sahil - @hsmodzofc2"
-            }, null, 2), {
-                status: 400,
-                headers: { 
-                    'Content-Type': 'application/json',
-                    ...corsHeaders
-                }
-            });
-        }
-
-        try {
-            // External API call karein
-            const apiResponse = await fetch(apiUrl);
-            
-            if (!apiResponse.ok) {
-                throw new Error(`API returned ${apiResponse.status}`);
+      // Detect if it's a phone number or CNIC based on length
+      if (cleanedNum.length === 13) {
+        // It's a CNIC
+        type = 'cnic';
+        
+        // Validate CNIC format
+        if (!/^\d{13}$/.test(cleanedNum)) {
+          return Response.json({
+            success: false,
+            error: 'Invalid CNIC format',
+            message: 'CNIC must be 13 digits (without dashes)'
+          }, {
+            status: 400,
+            headers: { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
             }
-            
-            const apiData = await apiResponse.json();
-            
-            // 📦 STANDARDIZE RESPONSE BASED ON PROVIDER
-            let standardizedData = [];
-            
-            if (provider === 'Telenor') {
-                // Telenor format conversion
-                standardizedData = [{
-                    number: apiData.data.mobile || searchNumber,
-                    name: apiData.data.name || '',
-                    cnic: apiData.data.cnic || '',
-                    address: apiData.data.address || '',
-                    network: network
-                }];
-            } 
-            else if (provider === 'Zong' || provider === 'Ufone') {
-                // Zong/Ufone format conversion
-                standardizedData = (apiData.data || []).map(record => ({
-                    number: record.number || searchNumber,
-                    name: record.name || '',
-                    cnic: record.cnic || '',
-                    address: record.address || '',
-                    network: network
-                }));
-            } 
-            else if (provider === 'Jazz' || provider === 'CNIC') {
-                // Jazz/CNIC format conversion
-                standardizedData = (apiData.data?.records || []).map(record => ({
-                    number: record.mobile || searchNumber,
-                    name: record.name || '',
-                    cnic: record.cnic || '',
-                    address: record.address || '',
-                    network: provider === 'CNIC' ? 'Multiple' : network
-                }));
-            }
-
-            // 🎨 "For General Use" STYLE RESPONSE
-            if (standardizedData.length > 0) {
-                // Multiple records (CNIC case) ke liye array format
-                if (provider === 'CNIC' && standardizedData.length > 1) {
-                    return new Response(JSON.stringify({
-                        success: true,
-                        query: searchNumber,
-                        type: 'cnic_lookup',
-                        results: standardizedData.map(record => ({
-                            name: record.name,
-                            cnic: record.cnic,
-                            address: record.address,
-                            network: record.network,
-                            number: record.number
-                        })),
-                        count: standardizedData.length,
-                        meta: {
-                            timestamp: new Date().toISOString(),
-                            developer: 'Haseeb Sahil',
-                            credit: '@hsmodzofc2',
-                            note: 'CNIC may have multiple mobile numbers'
-                        }
-                    }, null, 2), {
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Cache-Control': 'max-age=300',
-                            ...corsHeaders
-                        }
-                    });
-                } 
-                else {
-                    // Single record (normal mobile number) ke liye
-                    const mainRecord = standardizedData[0];
-                    
-                    return new Response(JSON.stringify({
-                        success: true,
-                        query: searchNumber,
-                        result: {
-                            name: mainRecord.name,
-                            cnic: mainRecord.cnic,
-                            address: mainRecord.address,
-                            network: mainRecord.network
-                        },
-                        meta: {
-                            timestamp: new Date().toISOString(),
-                            developer: 'Haseeb Sahil',
-                            credit: '@hsmodzofc2'
-                        }
-                    }, null, 2), {
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Cache-Control': 'max-age=300',
-                            ...corsHeaders
-                        }
-                    });
-                }
-            } else {
-                // No records found
-                return new Response(JSON.stringify({
-                    "error": true,
-                    "message": "No records found for this number",
-                    "query": searchNumber,
-                    "suggestion": "Try another valid Pakistan number",
-                    "developer": "Haseeb Sahil",
-                    "channel": "@hsmodzofc2"
-                }, null, 2), {
-                    status: 404,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Cache-Control': 'max-age=300',
-                        ...corsHeaders
-                    }
-                });
-            }
-
-        } catch (error) {
-            // Error handling
-            return new Response(JSON.stringify({
-                "error": true,
-                "message": "Failed to fetch data from database",
-                "query": searchNumber,
-                "fix": "Please try again later",
-                "developer": "Haseeb Sahil",
-                "channel": "@hsmodzofc2"
-            }, null, 2), {
-                status: 502,
-                headers: { 
-                    'Content-Type': 'application/json',
-                    ...corsHeaders
-                }
-            });
+          });
         }
+        
+        result = await fetchData(cleanedNum, 'cnic');
+        
+      } else if (cleanedNum.length === 10 || cleanedNum.length === 11 || cleanedNum.length === 12) {
+        // It's a phone number
+        type = 'phone';
+        
+        // Format phone number
+        let phoneNumber = cleanedNum;
+        if (cleanedNum.startsWith('92') && cleanedNum.length === 12) {
+          phoneNumber = '0' + cleanedNum.substring(2);
+        } else if (cleanedNum.startsWith('3') && cleanedNum.length === 10) {
+          phoneNumber = '0' + cleanedNum;
+        }
+
+        // Validate Jazz number format
+        const isValidJazzNumber = validateJazzNumber(phoneNumber);
+        if (!isValidJazzNumber.valid) {
+          return Response.json({
+            success: false,
+            error: 'Invalid Jazz mobile number',
+            message: isValidJazzNumber.message
+          }, {
+            status: 400,
+            headers: { 
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*'
+            }
+          });
+        }
+        
+        result = await fetchData(phoneNumber, 'phone');
+        
+      } else {
+        return Response.json({
+          success: false,
+          error: 'Invalid input length',
+          message: 'Jazz number should be 11 digits (03XXXXXXXXX) or CNIC should be 13 digits'
+        }, {
+          status: 400,
+          headers: { 
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
+      }
+
+      // Prepare response according to desired structure
+      const responseData = prepareResponse(result, num, type);
+
+      // Return response
+      return Response.json(responseData, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+
+    } catch (error) {
+      return Response.json({
+        success: false,
+        error: 'Server error',
+        message: error.message
+      }, {
+        status: 500,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
     }
+  }
 };
+
+// ========== VALIDATE JAZZ NUMBER ==========
+function validateJazzNumber(phoneNumber) {
+  // Must be 11 digits starting with 03
+  if (!/^03\d{9}$/.test(phoneNumber)) {
+    return {
+      valid: false,
+      message: 'Invalid Pakistani mobile number format. Must start with 03 and be 11 digits'
+    };
+  }
+
+  // Get the prefix (first 4 digits)
+  const prefix = phoneNumber.substring(0, 4);
+  
+  // Jazz prefixes: 0300-0309, 0320-0329
+  const jazzPrefixes = [
+    '0300', '0301', '0302', '0303', '0304', '0305', '0306', '0307', '0308', '0309',
+    '0320', '0321', '0322', '0323', '0324', '0325', '0326', '0327', '0328', '0329'
+  ];
+
+  if (!jazzPrefixes.includes(prefix)) {
+    return {
+      valid: false,
+      message: 'Not a Jazz number. Jazz numbers must start with 0300-0309 or 0320-0329'
+    };
+  }
+
+  return {
+    valid: true,
+    message: 'Valid Jazz number'
+  };
+}
+
+// ========== FETCH DATA FUNCTION ==========
+async function fetchData(number, type) {
+  const url = 'https://paksimownerdetails.com/SecureInfo.php';
+  
+  // Create form data as per website
+  const formData = new URLSearchParams();
+  formData.append('number', number);
+  formData.append('search', 'search');
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Origin': 'https://paksimownerdetails.com',
+        'Referer': 'https://paksimownerdetails.com/',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Upgrade-Insecure-Requests': '1'
+      },
+      body: formData.toString()
+    });
+
+    const html = await response.text();
+    return parseHTML(html, number, type);
+    
+  } catch (error) {
+    return {
+      success: false,
+      records: [],
+      message: 'Failed to fetch data from source'
+    };
+  }
+}
+
+// ========== HTML PARSER ==========
+function parseHTML(html, number, type) {
+  const result = {
+    success: true,
+    records: [],
+    message: 'Data retrieved successfully'
+  };
+
+  // Check if no records found
+  if (html.includes('No record found') || 
+      html.toLowerCase().includes('not found') ||
+      (html.includes('Sorry') && html.includes('found'))) {
+    result.success = false;
+    result.message = type === 'phone' 
+      ? 'No records found for this phone number'
+      : 'No records found for this CNIC';
+    return result;
+  }
+
+  // Look for table rows
+  const rows = [];
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+
+  while ((rowMatch = rowRegex.exec(html))) {
+    rows.push(rowMatch[1]);
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    
+    // Skip header row
+    if (row.includes('<th>') || row.toLowerCase().includes('mobile') && 
+        row.toLowerCase().includes('name') && row.toLowerCase().includes('cnic')) {
+      continue;
+    }
+
+    // Extract cells from row
+    const cells = [];
+    const cellRegex = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+    let cellMatch;
+
+    while ((cellMatch = cellRegex.exec(row))) {
+      let content = cellMatch[1]
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      
+      // Clean emojis and extra spaces
+      content = content.replace(/[^\x00-\x7F]/g, '').trim();
+      cells.push(content);
+    }
+
+    // We need at least 4 columns: Mobile, Name, CNIC, Address
+    if (cells.length >= 4) {
+      const mobile = formatMobile(cells[0] || '');
+      const name = cells[1] || '';
+      const cnic = formatCNIC(cells[2] || '');
+      const address = cells[3] || '';
+
+      // Validate Jazz number
+      const isValidJazz = validateJazzNumber(mobile);
+      
+      // Create record
+      const record = {
+        mobile: mobile,
+        name: name,
+        cnic: cnic,
+        address: address,
+        network: 'Jazz',
+        status: 'Active',
+        country: 'Pakistan'
+      };
+
+      // For phone search, validate the mobile number matches and is Jazz
+      if (type === 'phone') {
+        const formattedSearchNum = formatMobile(number);
+        if (record.mobile === formattedSearchNum && isValidJazz.valid) {
+          result.records.push(record);
+        }
+      } else if (type === 'cnic') {
+        // For CNIC search, validate CNIC matches and number is Jazz
+        if (formatCNIC(record.cnic) === number && isValidJazz.valid) {
+          result.records.push(record);
+        }
+      }
+    }
+  }
+
+  if (result.records.length === 0) {
+    result.success = false;
+    result.message = type === 'phone'
+      ? 'No valid Jazz records found for this phone number'
+      : 'No valid Jazz records found for this CNIC';
+  }
+
+  return result;
+}
+
+// ========== PREPARE RESPONSE ==========
+function prepareResponse(result, originalQuery, type) {
+  const timestamp = new Date().toISOString();
+  
+  // If no records found
+  if (!result.success || result.records.length === 0) {
+    return {
+      success: false,
+      query: originalQuery,
+      message: result.message,
+      meta: {
+        timestamp: timestamp,
+        developer: "Haseeb Sahil",
+        credit: "@hsmodzofc2"
+      }
+    };
+  }
+
+  // Get first record (for single record response)
+  const record = result.records[0];
+  
+  return {
+    success: true,
+    query: originalQuery,
+    result: {
+      name: record.name || "N/A",
+      cnic: record.cnic || "N/A",
+      address: record.address || "N/A",
+      network: record.network || "Jazz"
+    },
+    meta: {
+      timestamp: timestamp,
+      developer: "Haseeb Sahil",
+      credit: "@hsmodzofc2"
+    }
+  };
+}
+
+// ========== HELPER FUNCTIONS ==========
+function formatMobile(mobile) {
+  if (!mobile) return '';
+  
+  // Remove all non-digits
+  let cleaned = mobile.replace(/\D/g, '');
+  
+  // Ensure proper format
+  if (cleaned.startsWith('92') && cleaned.length === 12) {
+    cleaned = '0' + cleaned.substring(2);
+  } else if (cleaned.startsWith('3') && cleaned.length === 10) {
+    cleaned = '0' + cleaned;
+  }
+  
+  return cleaned;
+}
+
+function formatCNIC(cnic) {
+  if (!cnic) return '';
+  
+  // Remove all non-digits including hyphens
+  let cleaned = cnic.replace(/\D/g, '');
+  
+  // Return only digits without any formatting
+  return cleaned;
+}
+
+function formatCNICWithDashes(cnic) {
+  if (!cnic || cnic.length !== 13) return cnic;
+  return cnic.substring(0, 5) + '-' + cnic.substring(5, 12) + '-' + cnic.substring(12);
+}
