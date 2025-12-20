@@ -1,5 +1,20 @@
 export default {
     async fetch(request, env, ctx) {
+        // CORS headers - For preflight requests
+        const corsHeaders = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Max-Age': '86400',
+        };
+
+        // Handle OPTIONS request (preflight)
+        if (request.method === 'OPTIONS') {
+            return new Response(null, {
+                headers: corsHeaders
+            });
+        }
+
         // Sirf GET requests allow karein
         if (request.method !== 'GET') {
             return new Response(JSON.stringify({
@@ -10,7 +25,10 @@ export default {
                 "channel": "@hsmodzofc2"
             }, null, 2), {
                 status: 405,
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 
+                    'Content-Type': 'application/json',
+                    ...corsHeaders
+                }
             });
         }
 
@@ -29,7 +47,10 @@ export default {
                 "channel": "@hsmodzofc2"
             }, null, 2), {
                 status: 400,
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 
+                    'Content-Type': 'application/json',
+                    ...corsHeaders
+                }
             });
         }
 
@@ -78,7 +99,10 @@ export default {
                 "credits": "Haseeb Sahil - @hsmodzofc2"
             }, null, 2), {
                 status: 400,
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 
+                    'Content-Type': 'application/json',
+                    ...corsHeaders
+                }
             });
         }
 
@@ -151,7 +175,8 @@ export default {
                     }, null, 2), {
                         headers: {
                             'Content-Type': 'application/json',
-                            'Cache-Control': 'max-age=300'
+                            'Cache-Control': 'max-age=300',
+                            ...corsHeaders
                         }
                     });
                 } 
@@ -176,7 +201,8 @@ export default {
                     }, null, 2), {
                         headers: {
                             'Content-Type': 'application/json',
-                            'Cache-Control': 'max-age=300'
+                            'Cache-Control': 'max-age=300',
+                            ...corsHeaders
                         }
                     });
                 }
@@ -193,7 +219,8 @@ export default {
                     status: 404,
                     headers: {
                         'Content-Type': 'application/json',
-                        'Cache-Control': 'max-age=300'
+                        'Cache-Control': 'max-age=300',
+                        ...corsHeaders
                     }
                 });
             }
@@ -209,7 +236,10 @@ export default {
                 "channel": "@hsmodzofc2"
             }, null, 2), {
                 status: 502,
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 
+                    'Content-Type': 'application/json',
+                    ...corsHeaders
+                }
             });
         }
     }
