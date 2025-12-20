@@ -3,10 +3,12 @@ export default {
         // Sirf GET requests allow karein
         if (request.method !== 'GET') {
             return new Response(JSON.stringify({
-                success: false,
-                error: 'Only GET method is allowed',
-                status: 405
-            }), {
+                "error": true,
+                "message": "Only GET method is allowed",
+                "fix": "Use GET method instead",
+                "developer": "Haseeb Sahil",
+                "channel": "@hsmodzofc2"
+            }, null, 2), {
                 status: 405,
                 headers: { 'Content-Type': 'application/json' }
             });
@@ -19,15 +21,13 @@ export default {
         // Number parameter check
         if (!searchNumber) {
             return new Response(JSON.stringify({
-                success: false,
-                error: 'Number parameter missing',
-                usage: 'GET /?num=03001234567',
-                examples: [
-                    'Jazz: /?num=03051234567',
-                    'Telenor: /?num=03451234567',
-                    'CNIC: /?num=4220112345678'
-                ]
-            }), {
+                "error": true,
+                "message": "Phone number parameter is missing",
+                "fix": "Use: /?num=03051234567",
+                "examples": ["03051234567", "03451234567", "4220112345678"],
+                "developer": "Haseeb Sahil",
+                "channel": "@hsmodzofc2"
+            }, null, 2), {
                 status: 400,
                 headers: { 'Content-Type': 'application/json' }
             });
@@ -68,20 +68,15 @@ export default {
             network = 'Ufone';
             apiUrl = `https://ahmadmodstools.online/PublicApis/SimDataBase.php?num=${searchNumber}`;
         }
-        // Invalid number
+        // Invalid number - ✅ UPDATED WITH NEW ERROR RESPONSE
         else {
             return new Response(JSON.stringify({
-                success: false,
-                error: 'Invalid number format',
-                query: searchNumber,
-                valid_formats: {
-                    jazz: '0300-0309, 0320-0329',
-                    telenor: '0340-0349',
-                    zong: '0310-0319',
-                    ufone: '0330-0339',
-                    cnic: '13 digits only'
-                }
-            }), {
+                "invalid_input": true,
+                "description": "Provided input format is incorrect",
+                "expected_pattern": "Pakistan standard formats",
+                "try_these": "Mobile: 03XXXXXXXXX, CNIC: 13 digits",
+                "credits": "Haseeb Sahil - @hsmodzofc2"
+            }, null, 2), {
                 status: 400,
                 headers: { 'Content-Type': 'application/json' }
             });
@@ -106,7 +101,7 @@ export default {
                     number: apiData.data.mobile || searchNumber,
                     name: apiData.data.name || '',
                     cnic: apiData.data.cnic || '',
-                    address: apiData.data.address || '', // ✅ AS-IS
+                    address: apiData.data.address || '',
                     network: network
                 }];
             } 
@@ -116,7 +111,7 @@ export default {
                     number: record.number || searchNumber,
                     name: record.name || '',
                     cnic: record.cnic || '',
-                    address: record.address || '', // ✅ AS-IS
+                    address: record.address || '',
                     network: network
                 }));
             } 
@@ -126,7 +121,7 @@ export default {
                     number: record.mobile || searchNumber,
                     name: record.name || '',
                     cnic: record.cnic || '',
-                    address: record.address || '', // ✅ AS-IS
+                    address: record.address || '',
                     network: provider === 'CNIC' ? 'Multiple' : network
                 }));
             }
@@ -142,7 +137,7 @@ export default {
                         results: standardizedData.map(record => ({
                             name: record.name,
                             cnic: record.cnic,
-                            address: record.address, // ✅ AS-IS (no formatting)
+                            address: record.address,
                             network: record.network,
                             number: record.number
                         })),
@@ -170,7 +165,7 @@ export default {
                         result: {
                             name: mainRecord.name,
                             cnic: mainRecord.cnic,
-                            address: mainRecord.address, // ✅ AS-IS (no formatting)
+                            address: mainRecord.address,
                             network: mainRecord.network
                         },
                         meta: {
@@ -188,16 +183,14 @@ export default {
             } else {
                 // No records found
                 return new Response(JSON.stringify({
-                    success: true,
-                    query: searchNumber,
-                    result: null,
-                    message: 'No records found for this number',
-                    meta: {
-                        timestamp: new Date().toISOString(),
-                        developer: 'Haseeb Sahil',
-                        credit: '@hsmodzofc2'
-                    }
+                    "error": true,
+                    "message": "No records found for this number",
+                    "query": searchNumber,
+                    "suggestion": "Try another valid Pakistan number",
+                    "developer": "Haseeb Sahil",
+                    "channel": "@hsmodzofc2"
                 }, null, 2), {
+                    status: 404,
                     headers: {
                         'Content-Type': 'application/json',
                         'Cache-Control': 'max-age=300'
@@ -206,22 +199,18 @@ export default {
             }
 
         } catch (error) {
-            // Error handling in same style
+            // Error handling
             return new Response(JSON.stringify({
-                success: false,
-                query: searchNumber,
-                error: 'Failed to fetch data',
-                message: error.message,
-                meta: {
-                    timestamp: new Date().toISOString(),
-                    developer: 'Haseeb Sahil',
-                    credit: '@hsmodzofc2'
-                }
+                "error": true,
+                "message": "Failed to fetch data from database",
+                "query": searchNumber,
+                "fix": "Please try again later",
+                "developer": "Haseeb Sahil",
+                "channel": "@hsmodzofc2"
             }, null, 2), {
                 status: 502,
                 headers: { 'Content-Type': 'application/json' }
             });
         }
     }
-    // ❌ formatAddress function REMOVED
 };
