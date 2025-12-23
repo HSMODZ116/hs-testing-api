@@ -52,104 +52,127 @@ async function handleRequest(request) {
   }
 
   // Handle POST request for face swap
-  if (request.method === 'POST' && request.url.endsWith('/swap')) {
+if (request.method === 'POST' && request.url.endsWith('/swap')) {
     try {
-      const formData = await request.formData()
-      
-      const sourceFile = formData.get('source')
-      const targetFile = formData.get('target')
-      
-      if (!sourceFile || !targetFile) {
-        return new Response(JSON.stringify({
-          "success": false,
-          "message": "Both source and target images are required"
-        }), {
-          status: 400,
-          headers: {
-            'Content-Type': 'application/json',
-            ...corsHeaders
-          }
-        })
-      }
+        let data;
+        const contentType = request.headers.get('content-type');
+        
+        if (contentType.includes('multipart/form-data')) {
+            // Handle multipart (original)
+            const formData = await request.formData();
+            const sourceFile = formData.get('source');
+            const targetFile = formData.get('target');
+            
+            if (!sourceFile || !targetFile) {
+                return new Response(JSON.stringify({
+                    "success": false,
+                    "message": "Both source and target images are required"
+                }), {
+                    status: 400,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...corsHeaders
+                    }
+                });
+            }
 
-      // Convert files to base64
-      const sourceBuffer = await sourceFile.arrayBuffer()
-      const targetBuffer = await targetFile.arrayBuffer()
-      
-      const sourceBase64 = arrayBufferToBase64(sourceBuffer)
-      const targetBase64 = arrayBufferToBase64(targetBuffer)
-
-      // Prepare payload for DeepSwap API
-      const payload = {
-        "source": sourceBase64,
-        "target": targetBase64,
-        "security": SECURITY_PAYLOAD
-      }
-
-      // Call DeepSwap API
-      const response = await fetch(DEEPSWAP_API, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-        body: JSON.stringify(payload)
-      })
-
-      if (!response.ok) {
-        return new Response(JSON.stringify({
-          "success": false,
-          "message": "DeepSwap API failed",
-          "status": response.status
-        }), {
-          status: 500,
-          headers: {
-            'Content-Type': 'application/json',
-            ...corsHeaders
-          }
-        })
-      }
-
-      const data = await response.json()
-
-      if (!data.result) {
-        return new Response(JSON.stringify({
-          "success": false,
-          "message": "No result received from API"
-        }), {
-          status: 500,
-          headers: {
-            'Content-Type': 'application/json',
-            ...corsHeaders
-          }
-        })
-      }
-
-      // Convert base64 result to image
-      const imageData = data.result.split(',')[1] || data.result
-      const imageBuffer = base64ToArrayBuffer(imageData)
-      
-      return new Response(imageBuffer, {
-        headers: {
-          'Content-Type': 'image/png',
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache'
+            // Convert files to base64
+            const sourceBuffer = await sourceFile.arrayBuffer();
+            const targetBuffer = await targetFile.arrayBuffer();
+            
+            data = {
+                source: arrayBufferToBase64(sourceBuffer),
+                target: arrayBufferToBase64(targetBuffer)
+            };
+        } else if (contentType.includes('application/json')) {
+            // Handle JSON with Base64
+            data = await request.json();
+        } else {
+            return new Response(JSON.stringify({
+                "success": false,
+                "message": "Unsupported content type"
+            }), {
+                status: 400,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...corsHeaders
+                }
+            });
         }
-      })
+
+        // Prepare payload for DeepSwap API
+        const payload = {
+            "source": data.source,
+            "target": data.target,
+            "security": SECURITY_PAYLOAD
+        }
+
+        // Call DeepSwap API
+        const response = await fetch(DEEPSWAP_API, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0'
+            },
+            body: JSON.stringify(payload)
+        })
+
+        if (!response.ok) {
+            return new Response(JSON.stringify({
+                "success": false,
+                "message": "DeepSwap API failed",
+                "status": response.status
+            }), {
+                status: 500,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...corsHeaders
+                }
+            });
+        }
+
+        const deepData = await response.json();
+
+        if (!deepData.result) {
+            return new Response(JSON.stringify({
+                "success": false,
+                "message": "No result received from API"
+            }), {
+                status: 500,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...corsHeaders
+                }
+            });
+        }
+
+        // Return as JSON with Base64
+        const imageData = deepData.result.split(',')[1] || deepData.result;
+        
+        return new Response(JSON.stringify({
+            "success": true,
+            "result": `data:image/png;base64,${imageData}`,
+            "message": "Face swap successful"
+        }), {
+            headers: {
+                'Content-Type': 'application/json',
+                ...corsHeaders
+            }
+        });
 
     } catch (error) {
-      return new Response(JSON.stringify({
-        "success": false,
-        "error": error.message
-      }), {
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          ...corsHeaders
-        }
-      })
+        return new Response(JSON.stringify({
+            "success": false,
+            "error": error.message
+        }), {
+            status: 500,
+            headers: {
+                'Content-Type': 'application/json',
+                ...corsHeaders
+            }
+        });
     }
-  }
+}
 
   // 404 for other routes
   return new Response(JSON.stringify({
