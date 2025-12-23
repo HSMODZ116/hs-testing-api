@@ -1,125 +1,325 @@
-addEventListener("fetch", event => {
-  event.respondWith(handleRequest(event.request))
-})
+// index.js for Cloudflare Worker
+export default {
+  async fetch(request, env, ctx) {
+    // Handle CORS preflight requests
+    if (request.method === 'OPTIONS') {
+      return handleCORS();
+    }
 
-const DEEPSWAP_API = "https://api.deepswapper.com/swap"
-
-const SECURITY_PAYLOAD = {
-  token: "0.ufDEMbVMT7mc9_XLsFDSK5CQqdj9Cx_Zjww0DevIvXN5M4fXQr3B9YtPdGkKAHjXBK6UC9rFcEbZbzCfkxxgmdTYV8iPzTby0C03dTKv5V9uXFYfwIVlqwNbIsfOK_rLRHIPB31bQ0ijSTEd-lLbllf3MkEcpkEZFFmmq8HMAuRuliCXFEdCwEB1HoYSJtvJEmDIVsooU3gYdrCm5yOJ8_lZ4DiHCSvy7P8-YxwJKkapJNCMUCFIfJbWDkDzvh8DGPyTRoHbURX8kClfImmPrGcqlfd7kkoNRcudS25IbNf1CGBsh8V96MtEhnTZvOpZfnp5dpV7MfgwOgvx7hUazUaC_wxQE63Aa0uOPuGvJ70BNrmeZIIrY9roD1Koj316L4g2BZ_LLZZF11wcrNNon8UXB0iVudiNCJyDQCxLUmblXUpt4IUvRoiOqXBNtWtLqY0su0ieVB0jjyDf_-zs7wc8WQ_jqp-NsTxgKOgvZYWV6Elz_lf4cNxGHZJ5BdcyLEoRBH3cksvwoncmYOy5Ulco22QT-x2z06xVFBZYZMVulxAcmvQemKfSFKsNaDxwor35p-amn9Vevhyb-GzA_oIoaTmc0fVXSshax2rdFQHQms86fZ_jkTieRpyIuX0mI3C5jLGIiOXzWxNgax9eZeQstYjIh8BIdMiTIUHfyKVTgtoLbK0hjTUTP0xDlCLnOt5qHdwe_iTWedBsswAJWYdtIxw0YUfIU22GMYrJoekOrQErawNlU5yT-LhXquBQY3EBtEup4JMWLendSh68d6HqjN2T3sAfVw0nY5jg7_5LJwj5gqEk57devNN8GGhogJpfdGzYoNGja22IZIuDnPPmWTpGx4VcLOLknSHrzio.tXUN6eooS69z3QtBp-DY1g.d882822dfe05be2b36ed1950554e1bac753abfe304a289adc4289b3f0d517356",
-  type: "invisible",
-  id: "deepswapper"
-}
-
-async function handleRequest(request) {
-  if (request.method === "OPTIONS") {
-    return new Response(null, {
-      status: 204,
-      headers: cors()
-    })
-  }
-
-  if (request.method === "GET") {
-    return json({
-      status: "running",
-      usage: "POST /swap { source:url , target:url }"
-    })
-  }
-
-  if (request.method === "POST" && request.url.endsWith("/swap")) {
-    try {
-      const body = await request.json()
-      const sourceUrl = body.source
-      const targetUrl = body.target
-
-      if (!sourceUrl || !targetUrl) {
-        return json({ error: "source and target required" }, 400)
-      }
-
-      const srcRes = await fetch(sourceUrl)
-      const tgtRes = await fetch(targetUrl)
-
-      if (!srcRes.ok || !tgtRes.ok) {
-        return json({ error: "image fetch failed" }, 400)
-      }
-
-      const srcBase64 = toBase64(await srcRes.arrayBuffer())
-      const tgtBase64 = toBase64(await tgtRes.arrayBuffer())
-
-      const payload = {
-        source: srcBase64,
-        target: tgtBase64,
-        security: SECURITY_PAYLOAD
-      }
-
-      const apiRes = await fetch(DEEPSWAP_API, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent": "Mozilla/5.0"
-        },
-        body: JSON.stringify(payload)
-      })
-
-      if (!apiRes.ok) {
-        return json({ error: "deepswap failed" }, 500)
-      }
-
-      const data = await apiRes.json()
-      if (!data.result) {
-        return json({ error: "no image result" }, 500)
-      }
-
-      const imgData = data.result.split(",")[1] || data.result
-      const buffer = fromBase64(imgData)
-
-      return new Response(buffer, {
-        headers: {
-          "Content-Type": "image/png",
-          "Cache-Control": "no-store",
-          "Access-Control-Allow-Origin": "*"
+    // Only allow GET requests
+    if (request.method !== 'GET') {
+      return new Response(
+        JSON.stringify({ error: 'Method not allowed. Use GET with file_url parameter.' }),
+        { 
+          status: 405,
+          headers: getHeaders()
         }
-      })
+      );
+    }
 
-    } catch (e) {
-      return json({ error: e.message }, 500)
+    try {
+      // Get URL parameters
+      const url = new URL(request.url);
+      const fileUrl = url.searchParams.get('file_url');
+      
+      // Check if file_url parameter is provided
+      if (!fileUrl) {
+        return errorResponse('Missing required parameter: file_url. Example: ?file_url=https://example.com/script.js', 400);
+      }
+
+      // Validate URL format
+      let parsedFileUrl;
+      try {
+        parsedFileUrl = new URL(fileUrl);
+      } catch (e) {
+        return errorResponse('Invalid URL format. Please provide a valid URL.', 400);
+      }
+
+      // Step 1: Download the JavaScript file from provided URL
+      const { jsCode, originalFileName } = await downloadJavaScriptFile(fileUrl);
+      if (!jsCode) {
+        return errorResponse('Failed to download JavaScript file. Make sure the URL is accessible and contains a .js file.', 400);
+      }
+
+      // Step 2: Obfuscate the JavaScript code
+      const obfuscatedCode = await obfuscateJavaScript(jsCode);
+      if (!obfuscatedCode) {
+        return errorResponse('Failed to obfuscate JavaScript code. Obfuscation service might be unavailable.', 500);
+      }
+
+      // Step 3: Upload the obfuscated file to your hosting service
+      const fileUrlResponse = await uploadToHosting(obfuscatedCode, originalFileName);
+      if (!fileUrlResponse) {
+        return errorResponse('Failed to upload file to hosting service.', 500);
+      }
+
+      // Step 4: Get the final hosted URL
+      const finalUrl = await getHostedUrl(fileUrlResponse, originalFileName);
+
+      // Return success response with the URL
+      return successResponse({
+        success: true,
+        message: 'File downloaded, obfuscated, and uploaded successfully',
+        originalUrl: fileUrl,
+        originalFilename: originalFileName,
+        obfuscatedFileUrl: finalUrl,
+        downloadLink: `<a href="${finalUrl}" target="_blank">${finalUrl}</a>`,
+        timestamp: new Date().toISOString(),
+        note: 'The obfuscated file is available for 24 hours'
+      });
+
+    } catch (error) {
+      console.error('Error processing request:', error);
+      return errorResponse(`Internal server error: ${error.message}`, 500);
     }
   }
+};
 
-  return json({ error: "not found" }, 404)
+// Function to download JavaScript file from URL
+async function downloadJavaScriptFile(fileUrl) {
+  try {
+    const response = await fetch(fileUrl, {
+      headers: {
+        'User-Agent': 'Cloudflare-Worker-JS-Obfuscator/1.0'
+      },
+      cf: {
+        // Cloudflare specific cache settings
+        cacheTtl: 300,
+        cacheEverything: false
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to download file: ${response.status} ${response.statusText}`);
+    }
+
+    // Check content type
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('javascript') && !contentType.includes('text/plain')) {
+      console.warn(`Downloaded file may not be JavaScript. Content-Type: ${contentType}`);
+    }
+
+    // Get filename from URL or response headers
+    let fileName = 'script.js';
+    
+    // Try to get filename from Content-Disposition header
+    const contentDisposition = response.headers.get('content-disposition');
+    if (contentDisposition) {
+      const filenameMatch = contentDisposition.match(/filename="?(.+?)"?$/);
+      if (filenameMatch && filenameMatch[1]) {
+        fileName = filenameMatch[1];
+      }
+    }
+    
+    // If not found in headers, extract from URL
+    if (fileName === 'script.js') {
+      const urlPath = new URL(fileUrl).pathname;
+      const urlFileName = urlPath.split('/').pop();
+      if (urlFileName && urlFileName.includes('.js')) {
+        fileName = urlFileName;
+      } else if (urlFileName && urlFileName.includes('.')) {
+        // Keep original extension
+        fileName = urlFileName;
+      } else {
+        // Add .js extension if missing
+        fileName = 'downloaded_script.js';
+      }
+    }
+
+    // Read the file content
+    const jsCode = await response.text();
+    
+    // Validate that it's actually JavaScript code
+    if (jsCode.length === 0) {
+      throw new Error('Downloaded file is empty');
+    }
+
+    // Basic JavaScript validation (optional)
+    const isValidJS = validateJavaScript(jsCode);
+    if (!isValidJS) {
+      console.warn('Downloaded content may not be valid JavaScript');
+    }
+
+    return { jsCode, originalFileName: fileName };
+  } catch (error) {
+    console.error('Download error:', error);
+    return { jsCode: null, originalFileName: null };
+  }
 }
 
-function cors() {
+// Basic JavaScript validation (simple check)
+function validateJavaScript(code) {
+  // Check if it contains common JavaScript patterns
+  const jsPatterns = [
+    /function\s+\w+\s*\(/i,
+    /const\s+\w+\s*=/,
+    /let\s+\w+\s*=/,
+    /var\s+\w+\s*=/,
+    /console\.log/,
+    /document\./,
+    /window\./,
+    /\.addEventListener/,
+    /return\s+/,
+    /if\s*\(/,
+    /for\s*\(/,
+    /while\s*\(/
+  ];
+  
+  return jsPatterns.some(pattern => pattern.test(code)) || code.includes(';');
+}
+
+// Function to obfuscate JavaScript code using external API
+async function obfuscateJavaScript(code) {
+  try {
+    // Encode the code for URL
+    const encodedCode = encodeURIComponent(code);
+    const obfuscateApiUrl = `https://api.deline.web.id/tools/enc?text=${encodedCode}`;
+    
+    const response = await fetch(obfuscateApiUrl, {
+      headers: {
+        'User-Agent': 'Cloudflare-Worker-Obfuscator/1.0',
+        'Accept': 'application/json'
+      },
+      cf: {
+        cacheTtl: 60,
+        cacheEverything: false
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Obfuscation API failed with status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    if (data.status === true && data.result) {
+      return data.result;
+    } else {
+      throw new Error('Invalid response from obfuscation API');
+    }
+  } catch (error) {
+    console.error('Obfuscation error:', error);
+    return null;
+  }
+}
+
+// Function to upload obfuscated code to your hosting service
+async function uploadToHosting(obfuscatedCode, originalFileName) {
+  try {
+    // Create a FormData object for the upload
+    const formData = new FormData();
+    
+    // Create a blob from the obfuscated code
+    const blob = new Blob([obfuscatedCode], { type: 'application/javascript' });
+    
+    // Generate a new filename with timestamp
+    const timestamp = Date.now();
+    const randomId = Math.random().toString(36).substring(2, 10);
+    const newFileName = `obfuscated_${timestamp}_${randomId}_${originalFileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    
+    // Append the file to FormData
+    formData.append('file', blob, newFileName);
+    
+    // Upload to your hosting service
+    const uploadResponse = await fetch('https://hosting.haseeb-sahil.workers.dev/upload', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!uploadResponse.ok) {
+      const errorText = await uploadResponse.text();
+      console.error('Upload failed:', errorText);
+      throw new Error(`Upload failed with status: ${uploadResponse.status}`);
+    }
+
+    return await uploadResponse.json();
+  } catch (error) {
+    console.error('Upload error:', error);
+    return null;
+  }
+}
+
+// Function to get the final hosted URL
+async function getHostedUrl(uploadResponse, originalFileName) {
+  try {
+    // If upload service returns a direct URL
+    if (uploadResponse.url) {
+      return uploadResponse.url;
+    }
+    
+    // If upload service returns a file ID or name
+    if (uploadResponse.fileId || uploadResponse.name) {
+      const fileId = uploadResponse.fileId || uploadResponse.name;
+      return `https://hosting.haseeb-sahil.workers.dev/${fileId}`;
+    }
+    
+    // Try to fetch from the URL API
+    const urlResponse = await fetch('https://hosting.haseeb-sahil.workers.dev/hosturl');
+    if (urlResponse.ok) {
+      const urlData = await urlResponse.json();
+      if (urlData.url) {
+        return urlData.url;
+      }
+    }
+    
+    // Fallback: construct URL based on filename pattern
+    const timestamp = Date.now();
+    const randomId = Math.random().toString(36).substring(2, 10);
+    const safeFileName = originalFileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    return `https://hosting.haseeb-sahil.workers.dev/obfuscated_${timestamp}_${randomId}_${safeFileName}`;
+    
+  } catch (error) {
+    console.error('Error getting hosted URL:', error);
+    return 'https://hosting.haseeb-sahil.workers.dev/obfuscated_file.js';
+  }
+}
+
+// Helper function for success responses
+function successResponse(data) {
+  return new Response(
+    JSON.stringify(data, null, 2),
+    {
+      status: 200,
+      headers: getHeaders()
+    }
+  );
+}
+
+// Helper function for error responses
+function errorResponse(message, statusCode = 500) {
+  return new Response(
+    JSON.stringify({ 
+      success: false, 
+      error: message,
+      timestamp: new Date().toISOString()
+    }, null, 2),
+    {
+      status: statusCode,
+      headers: getHeaders()
+    }
+  );
+}
+
+// Get common headers
+function getHeaders() {
   return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type"
-  }
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Cache-Control': 'no-cache, no-store, must-revalidate'
+  };
 }
 
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
+// Handle CORS preflight requests
+function handleCORS() {
+  return new Response(null, {
+    status: 204,
     headers: {
-      "Content-Type": "application/json",
-      ...cors()
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Max-Age': '86400'
     }
-  })
-}
-
-function toBase64(buffer) {
-  let bin = ""
-  let bytes = new Uint8Array(buffer)
-  for (let i = 0; i < bytes.length; i++) {
-    bin += String.fromCharCode(bytes[i])
-  }
-  return btoa(bin)
-}
-
-function fromBase64(b64) {
-  let bin = atob(b64)
-  let bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) {
-    bytes[i] = bin.charCodeAt(i)
-  }
-  return bytes.buffer
+  });
 }
