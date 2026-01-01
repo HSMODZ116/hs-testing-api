@@ -1,4 +1,4 @@
-// Telenor Sim Owner Details API - Updated for freshsimdata.net
+// Telenor Sim Owner Details API - Updated for onlinesimdatabase.xyz
 // File: worker.js
 
 export default {
@@ -64,7 +64,7 @@ export default {
       }
 
       // Fetch data for the number
-      const data = await fetchFreshSimData(phoneNumber);
+      const data = await fetchSimData(phoneNumber);
       
       // Return response
       return Response.json({
@@ -93,69 +93,64 @@ export default {
   }
 };
 
-// ========== FETCH FROM FRESHSIMDATA.NET ==========
-async function fetchFreshSimData(phoneNumber) {
+// ========== FETCH FROM ONLINESIMDATABASE.XYZ ==========
+async function fetchSimData(phoneNumber) {
   try {
-    // First, get the main page to establish session
-    const mainPageResponse = await fetch('https://freshsimdata.net/', {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Upgrade-Insecure-Requests': '1'
-      }
-    });
-
-    // Get cookies from first request
-    const cookies = mainPageResponse.headers.get('set-cookie') || '';
-
-    // Now make the search request
-    const searchUrl = 'https://freshsimdata.net/numberDetails.php';
+    const searchUrl = 'https://onlinesimdatabase.xyz/numberDetails.php';
     
     const formData = new URLSearchParams();
     formData.append('searchBtn', 'search');
     formData.append('number', phoneNumber);
 
+    console.log('Fetching data for:', phoneNumber);
+    console.log('URL:', searchUrl);
+    
     const response = await fetch(searchUrl, {
       method: 'POST',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 14; TECNO KL4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Mobile Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Origin': 'https://freshsimdata.net',
-        'Referer': 'https://freshsimdata.net/',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'Cookie': cookies,
+        'Content-Length': '42',
+        'Origin': 'https://onlinesimdatabase.xyz',
+        'Referer': 'https://onlinesimdatabase.xyz/',
+        'Cache-Control': 'max-age=0',
+        'Sec-Ch-Ua': '"Chromium";v="107", "Not=A?Brand";v="24"',
+        'Sec-Ch-Ua-Mobile': '?1',
+        'Sec-Ch-Ua-Platform': '"Android"',
         'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'same-origin',
         'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1'
+        'Upgrade-Insecure-Requests': '1',
+        'Cookie': '_gcl_au=1.1.182421044.1767304236; _ga=GA1.1.1265403733.1767304236; _ga_PH5F8HXB13=GS2.1.1767304236.1.1.1767304252.0.0.0'
       },
       body: formData.toString()
     });
 
     const html = await response.text();
-    console.log('Response length:', html.length);
+    console.log('Response received, length:', html.length);
     
     if (html.length < 100) {
+      console.log('Response too short, might be blocked');
       return {
         success: false,
         message: 'Empty response from server'
       };
     }
     
-    return extractFreshSimData(html, phoneNumber);
+    // Check for Cloudflare protection
+    if (html.includes('cloudflare') || html.includes('cf-browser-verification') || html.includes('Please wait')) {
+      console.log('Cloudflare protection detected');
+      return {
+        success: false,
+        message: 'Website is protected by Cloudflare. Please try again later.'
+      };
+    }
+    
+    return extractSimData(html, phoneNumber);
     
   } catch (error) {
     console.error('Fetch error:', error);
@@ -166,8 +161,8 @@ async function fetchFreshSimData(phoneNumber) {
   }
 }
 
-// ========== EXTRACT DATA FROM FRESHSIMDATA ==========
-function extractFreshSimData(html, phoneNumber) {
+// ========== EXTRACT DATA FROM ONLINESIMDATABASE ==========
+function extractSimData(html, phoneNumber) {
   console.log('Extracting data from HTML...');
   
   // Check if no records found
@@ -176,6 +171,7 @@ function extractFreshSimData(html, phoneNumber) {
       lowerHtml.includes('data not found') ||
       lowerHtml.includes('try another') ||
       lowerHtml.includes('invalid number') ||
+      lowerHtml.includes('not available') ||
       (lowerHtml.includes('sorry') && lowerHtml.includes('not found'))) {
     console.log('No record found in HTML');
     return {
@@ -197,21 +193,49 @@ function extractFreshSimData(html, phoneNumber) {
     message: 'Data retrieved successfully'
   };
 
-  // ===== IMPROVED HTML PARSING =====
-  // Remove scripts and styles
+  // ===== FIRST TRY: EXTRACT FROM TABLE/CARD =====
+  // Look for specific patterns based on screenshot
+  
+  // Clean HTML for better parsing
   let cleanHtml = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
   cleanHtml = cleanHtml.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
+  cleanHtml = cleanHtml.replace(/<!--[\s\S]*?-->/g, '');
   
-  // Convert to text for pattern matching
-  const textContent = cleanHtml
+  // Try to find the main data container
+  const containerPatterns = [
+    /<div[^>]*class\s*=\s*["'][^"']*card[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*class\s*=\s*["'][^"']*container[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*class\s*=\s*["'][^"']*result[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+    /<table[^>]*>([\s\S]*?)<\/table>/i
+  ];
+  
+  let mainContent = '';
+  for (const pattern of containerPatterns) {
+    const match = cleanHtml.match(pattern);
+    if (match && match[1] && match[1].length > 100) {
+      mainContent = match[1];
+      console.log('Found main content, length:', mainContent.length);
+      break;
+    }
+  }
+  
+  // If no container found, use entire HTML
+  if (!mainContent) {
+    mainContent = cleanHtml;
+  }
+  
+  // Convert to text
+  const textContent = mainContent
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
     .replace(/\s+/g, ' ')
     .trim();
-
+  
   console.log('Text content length:', textContent.length);
   
   const upperText = textContent.toUpperCase();
@@ -220,54 +244,66 @@ function extractFreshSimData(html, phoneNumber) {
   const msisdnMatch = upperText.match(/MSISDN\s*[:]?\s*(\d{10})/i);
   if (msisdnMatch && msisdnMatch[1]) {
     result.record.mobile = '0' + msisdnMatch[1];
+    console.log('Found MSISDN:', result.record.mobile);
   }
-
+  
+  // ===== EXTRACT SERIAL NO =====
+  const serialMatch = upperText.match(/SERIAL NO\s*[:]?\s*(\d+)/i);
+  if (serialMatch) {
+    console.log('Serial No:', serialMatch[1]);
+  }
+  
   // ===== EXTRACT NAME =====
-  // Multiple patterns to try
+  // Look for patterns like in screenshot
   const namePatterns = [
-    /DEDUCTED\/COLLECTED FROM\s+([A-Z][A-Z\s]{2,50}?)(?=\s+(?:LACHMAN|POST|TEHSIL|ZILAH|HAVING|CNIC|$))/i,
     /FROM\s+([A-Z][A-Z\s]{2,50}?)(?=\s+(?:LACHMAN|POST|TEHSIL|ZILAH|HAVING|CNIC|$))/i,
-    /HAS BEEN\s+[A-Z\s]+\s+FROM\s+([A-Z][A-Z\s]{2,50}?)(?=\s+(?:LACHMAN|POST|TEHSIL|ZILAH|$))/i
+    /DEDUCTED\/COLLECTED FROM\s+([A-Z][A-Z\s]{2,50}?)(?=\s+(?:LACHMAN|POST|TEHSIL|ZILAH|$))/i,
+    /HAS BEEN[\s\S]+?FROM\s+([A-Z][A-Z\s]{2,50})/i,
+    /CERTIFIED THAT[\s\S]+?FROM\s+([A-Z][A-Z\s]{2,50})/i
   ];
-
+  
   for (const pattern of namePatterns) {
     const match = upperText.match(pattern);
     if (match && match[1]) {
       let name = match[1].trim();
-      if (name.length > 2 && !name.includes('DEDUCTED') && !name.includes('COLLECTED')) {
-        result.record.name = cleanName(name);
+      if (name.length > 2 && 
+          !name.includes('DEDUCTED') && 
+          !name.includes('COLLECTED') &&
+          !name.includes('CERTIFIED') &&
+          !name.includes('ACCOUNT')) {
+        result.record.name = formatName(name);
         console.log('Found name:', result.record.name);
         break;
       }
     }
   }
-
+  
   // ===== EXTRACT ADDRESS =====
+  // Based on screenshot pattern: address spans multiple lines
   if (result.record.name) {
-    // Find the section after name
-    const searchName = result.record.name.toUpperCase();
-    const nameIndex = upperText.indexOf(searchName);
+    const nameUpper = result.record.name.toUpperCase();
+    const nameIndex = upperText.indexOf(nameUpper);
     
     if (nameIndex !== -1) {
-      const afterName = upperText.substring(nameIndex + searchName.length);
+      const afterName = upperText.substring(nameIndex + nameUpper.length);
       
-      // Address patterns based on screenshot
+      // Address patterns from screenshot
       const addressPatterns = [
-        /([A-Z][A-Z\s,.-]+TEHSIL\s+[A-Z\s]+ZILAH\s+[A-Z\s]+)/i,
-        /(POST OFFICE\s+[A-Z\s]+TEHSIL\s+[A-Z\s]+ZILAH\s+[A-Z\s]+)/i,
-        /([A-Z][A-Z\s,.-]+?(?:TEHSIL|DISTRICT)\s+[A-Z\s,.-]+)/i,
-        /(LACHMAN WALA[\s\S]+?BHAKKAR)/i
+        /([A-Z][A-Z\s,.-]+POST OFFICE[\s\S]+?TEHSIL[\s\S]+?ZILAH[\s\S]+?[A-Z]+)/i,
+        /(LACHMAN WALA[\s\S]+?BHAKKAR)/i,
+        /([A-Z][A-Z\s,.-]+TEHSIL[\s\S]+?ZILAH[\s\S]+?[A-Z]+)/i,
+        /(POST OFFICE[\s\S]+?TEHSIL[\s\S]+?DISTRICT)/i
       ];
-
+      
       for (const pattern of addressPatterns) {
         const match = afterName.match(pattern);
         if (match && match[0]) {
           let address = match[0].trim();
           
-          // Clean up address
+          // Clean address
           address = address.replace(/\s+/g, ' ');
           address = address.replace(/\.{2,}/g, ' ');
-          address = address.replace(/^\s*,\s*|\s*,\s*$/g, '');
+          address = address.replace(/[^\w\s,.-]/g, ' ');
           
           if (address.length > 20) {
             result.record.address = formatAddress(address);
@@ -278,27 +314,38 @@ function extractFreshSimData(html, phoneNumber) {
       }
     }
   }
-
-  // Try direct address patterns
+  
+  // Alternative: Look for specific address line patterns
   if (!result.record.address) {
-    const directAddressPatterns = [
-      /LACHMAN WALA POST OFFICE[\s\S]+?BHAKKAR/i,
-      /POST OFFICE[\s\S]+?TEHSIL[\s\S]+?ZILAH/i,
-      /TEHSIL KALOR KOT[\s\S]+?BHAKKAR/i
-    ];
-
-    for (const pattern of directAddressPatterns) {
-      const match = upperText.match(pattern);
-      if (match && match[0]) {
-        const address = match[0].trim();
-        if (address.length > 10) {
-          result.record.address = formatAddress(address);
+    const lines = textContent.split(/\n|\r/).map(line => line.trim()).filter(line => line.length > 5);
+    
+    // Look for address-like lines (longer text, contains location words)
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].toUpperCase();
+      if ((line.includes('POST') && line.includes('OFFICE')) ||
+          (line.includes('TEHSIL') && line.includes('ZILAH')) ||
+          (line.includes('DISTRICT') && line.length > 30)) {
+        
+        // Combine with next lines if they look like address continuation
+        let fullAddress = lines[i];
+        for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
+          const nextLine = lines[j].toUpperCase();
+          if (nextLine.length > 10 && 
+              !nextLine.includes('CNIC') && 
+              !nextLine.includes('NTN') &&
+              !nextLine.includes('HAVING')) {
+            fullAddress += ' ' + lines[j];
+          }
+        }
+        
+        if (fullAddress.length > 25) {
+          result.record.address = formatAddress(fullAddress);
           break;
         }
       }
     }
   }
-
+  
   // ===== EXTRACT CNIC =====
   const cnicPatterns = [
     /CNIC NO[.\s:]*(\d{5}[-\s]?\d{7}[-\s]?\d{1})/i,
@@ -306,7 +353,7 @@ function extractFreshSimData(html, phoneNumber) {
     /(\d{5}-\d{7}-\d{1})/,
     /(\d{13})/
   ];
-
+  
   for (const pattern of cnicPatterns) {
     const match = upperText.match(pattern);
     if (match && match[1]) {
@@ -318,92 +365,126 @@ function extractFreshSimData(html, phoneNumber) {
       }
     }
   }
-
-  // ===== FALLBACK: TABLE PARSING =====
+  
+  // ===== EXTRACT NTN =====
+  const ntnMatch = upperText.match(/NTN\s*(?:NUMBER)?\s*[:]?\s*(\d+)/i);
+  if (ntnMatch) {
+    console.log('NTN found:', ntnMatch[1]);
+  }
+  
+  // ===== SECOND TRY: PARSE SPECIFIC HTML STRUCTURE =====
   if (!result.record.name || !result.record.address) {
-    // Try to find and parse tables
-    const tableRegex = /<table[^>]*>([\s\S]*?)<\/table>/gi;
-    let tableMatch;
+    console.log('Trying alternative parsing method...');
     
-    while ((tableMatch = tableRegex.exec(html)) !== null) {
-      const tableContent = tableMatch[1];
-      const tableText = tableContent
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      
-      if (tableText.length > 50) {
-        const upperTable = tableText.toUpperCase();
-        
-        // Extract name from table
-        if (!result.record.name) {
-          const nameMatch = upperTable.match(/FROM\s+([A-Z][A-Z\s]+?)(?=\s+(?:POST|TEHSIL|$))/);
-          if (nameMatch && nameMatch[1]) {
-            result.record.name = cleanName(nameMatch[1]);
-          }
+    // Look for specific divs or spans with data
+    const dataPatterns = [
+      /<b[^>]*>Name[^<]*<\/b>\s*[:\-]?\s*([^<]+)/i,
+      /<span[^>]*>Name[^<]*<\/span>\s*[:\-]?\s*([^<]+)/i,
+      /<td[^>]*>Name[^<]*<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
+      /<div[^>]*>[^<]*Name[^<]*[:\-][^<]*([^<]+)<\/div>/i
+    ];
+    
+    for (const pattern of dataPatterns) {
+      const match = html.match(pattern);
+      if (match && match[1]) {
+        const value = match[1].trim();
+        if (value.length > 2 && !result.record.name) {
+          result.record.name = formatName(value);
+          break;
         }
+      }
+    }
+    
+    // Look for address in HTML
+    const addressHtmlPatterns = [
+      /<b[^>]*>Address[^<]*<\/b>\s*[:\-]?\s*([^<]+)/i,
+      /<span[^>]*>Address[^<]*<\/span>\s*[:\-]?\s*([^<]+)/i,
+      /<td[^>]*>Address[^<]*<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
+      /<div[^>]*class\s*=\s*["'][^"']*address[^"']*["'][^>]*>([\s\S]*?)<\/div>/i
+    ];
+    
+    for (const pattern of addressHtmlPatterns) {
+      const match = html.match(pattern);
+      if (match && match[1]) {
+        const value = match[1].trim()
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
         
-        // Extract address from table
-        if (!result.record.address) {
-          const addressMatch = upperTable.match(/(POST OFFICE[\s\S]+?TEHSIL[\s\S]+?ZILAH[\s\S]+?[A-Z]+)/);
-          if (addressMatch && addressMatch[1]) {
-            result.record.address = formatAddress(addressMatch[1]);
-          }
+        if (value.length > 10 && !result.record.address) {
+          result.record.address = formatAddress(value);
+          break;
         }
       }
     }
   }
-
+  
   // ===== VALIDATE RESULTS =====
-  if (!result.record.name && !result.record.address && !result.record.cnic) {
+  const hasData = result.record.name || result.record.address || result.record.cnic;
+  
+  if (!hasData) {
     console.log('No data extracted from HTML');
     
-    // Debug: Save first 2000 chars of HTML for inspection
-    console.log('HTML sample:', html.substring(0, 2000));
+    // Save first 500 chars for debugging
+    console.log('HTML sample (first 500 chars):', html.substring(0, 500));
     
     return {
       success: false,
       message: 'No valid data found in the response'
     };
   }
-
-  // Final cleanup
-  if (result.record.address) {
-    result.record.address = result.record.address
-      .replace(/^[,\s]+|[,\s]+$/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  console.log('Extraction result:', result);
+  
+  console.log('Extraction successful:', {
+    name: result.record.name,
+    address: result.record.address,
+    cnic: result.record.cnic
+  });
+  
   return result;
 }
 
 // ========== HELPER FUNCTIONS ==========
-function cleanName(name) {
+function formatName(name) {
   return name
     .replace(/[^\w\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .map(word => {
+      if (word.length > 0) {
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      }
+      return word;
+    })
     .join(' ');
 }
 
 function formatAddress(address) {
   return address
     .replace(/\s+/g, ' ')
-    .replace(/,/g, ', ')
+    .replace(/[^\w\s,.-]/g, ' ')
     .trim()
     .split(' ')
     .map((word, index, arr) => {
       // Keep certain words in uppercase
-      const upperWords = ['TEHSIL', 'ZILAH', 'POST', 'OFFICE', 'DISTRICT', 'BHAKKAR'];
-      if (upperWords.includes(word.toUpperCase())) {
-        return word.toUpperCase();
+      const upperWords = [
+        'TEHSIL', 'ZILAH', 'POST', 'OFFICE', 'DISTRICT', 
+        'BHAKKAR', 'LACHMAN', 'WALA', 'ZAMEWALA', 
+        'GHULAMAN', 'KALOR', 'KOT'
+      ];
+      
+      const upperWord = word.toUpperCase();
+      if (upperWords.includes(upperWord)) {
+        return upperWord;
       }
+      
       // Proper case for other words
-      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      if (word.length > 0) {
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+      }
+      return word;
     })
-    .join(' ');
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
