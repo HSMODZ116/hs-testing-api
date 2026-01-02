@@ -21,61 +21,48 @@ function respond(data, status = 200) {
 function normalizeNumber(input) {
   let num = input.replace(/[^\d+]/g, '')
 
-  // Remove starting +
-  if (num.startsWith('+')) num = num.slice(1)
+  // Pakistan special case
+  if (/^0[3]\d{9}$/.test(num)) {
+    // 03xxxxxxxxx -> 923xxxxxxxxx
+    num = '92' + num.slice(1)
+  } else if (/^\+92[3]\d{9}$/.test(num)) {
+    // +923xxxxxxxxx -> 923xxxxxxxxx
+    num = num.slice(1)
+  } else if (/^3\d{9}$/.test(num)) {
+    // 3xxxxxxxxx -> 923xxxxxxxxx
+    num = '92' + num
+  } else if (num.startsWith('+')) {
+    // Remove starting + for all other countries
+    num = num.slice(1)
+  }
 
   // Minimum & maximum length (E.164 standard)
-  if (num.length < 8 || num.length > 15) {
-    return null
-  }
+  if (num.length < 8 || num.length > 15) return null
 
   return num
 }
 
 async function handleRequest(request) {
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { headers: HEADERS })
-  }
-
-  if (request.method !== 'GET') {
-    return respond({
-      ResultCode: 0,
-      ErrorCodes: ['Only GET method allowed']
-    }, 405)
-  }
+  if (request.method === 'OPTIONS') return new Response(null, { headers: HEADERS })
+  if (request.method !== 'GET') return respond({ ResultCode: 0, ErrorCodes: ['Only GET method allowed'] }, 405)
 
   const url = new URL(request.url)
   const originalInput = url.searchParams.get('accountNumber')
 
-  if (!originalInput) {
-    return respond({
-      ResultCode: 0,
-      ErrorCodes: ['accountNumber parameter is required']
-    }, 400)
-  }
+  if (!originalInput) return respond({ ResultCode: 0, ErrorCodes: ['accountNumber parameter is required'] }, 400)
 
   const normalized = normalizeNumber(originalInput)
-
-  if (!normalized) {
-    return respond({
-      ResultCode: 0,
-      ErrorCodes: ['Invalid account number format'],
-      OriginalInput: originalInput
-    }, 400)
-  }
+  if (!normalized) return respond({ ResultCode: 0, ErrorCodes: ['Invalid account number format'], OriginalInput: originalInput }, 400)
 
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 8000)
 
-    const apiUrl =
-      `https://www.easyload.com.pk/dingconnect.php?action=GetProviders&accountNumber=${normalized}`
-
+    const apiUrl = `https://www.easyload.com.pk/dingconnect.php?action=GetProviders&accountNumber=${normalized}`
     const res = await fetch(apiUrl, { signal: controller.signal })
     clearTimeout(timeout)
 
     if (!res.ok) throw new Error('Upstream API error')
-
     const data = await res.json()
 
     if (data.ResultCode === 1 && Array.isArray(data.Items)) {
@@ -104,11 +91,7 @@ async function handleRequest(request) {
   } catch (err) {
     return respond({
       ResultCode: 0,
-      ErrorCodes: [
-        err.name === 'AbortError'
-          ? 'Request timeout'
-          : 'Internal server error'
-      ]
+      ErrorCodes: [err.name === 'AbortError' ? 'Request timeout' : 'Internal server error']
     }, 500)
   }
 }
