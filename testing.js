@@ -2,106 +2,113 @@ addEventListener('fetch', event => {
   event.respondWith(handleRequest(event.request))
 })
 
+const HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Content-Type': 'application/json',
+  'Cache-Control': 'public, max-age=300',
+  'X-Content-Type-Options': 'nosniff'
+}
+
+function respond(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: HEADERS
+  })
+}
+
+function normalizeNumber(input) {
+  let num = input.replace(/[^\d+]/g, '')
+
+  // Remove starting +
+  if (num.startsWith('+')) num = num.slice(1)
+
+  // Minimum & maximum length (E.164 standard)
+  if (num.length < 8 || num.length > 15) {
+    return null
+  }
+
+  return num
+}
+
 async function handleRequest(request) {
-  const url = new URL(request.url)
-  
-  // CORS headers
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Content-Type': 'application/json'
-  }
-
-  // Handle preflight requests
   if (request.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
+    return new Response(null, { headers: HEADERS })
   }
 
-  // Get account number from query parameter
-  let accountNumber = url.searchParams.get('accountNumber')
-  
-  if (!accountNumber) {
-    return new Response(
-      JSON.stringify({ 
-        ResultCode: 0, 
-        ErrorCodes: ['accountNumber parameter is required'] 
-      }), 
-      { 
-        status: 400, 
-        headers: corsHeaders 
-      }
-    )
+  if (request.method !== 'GET') {
+    return respond({
+      ResultCode: 0,
+      ErrorCodes: ['Only GET method allowed']
+    }, 405)
+  }
+
+  const url = new URL(request.url)
+  const originalInput = url.searchParams.get('accountNumber')
+
+  if (!originalInput) {
+    return respond({
+      ResultCode: 0,
+      ErrorCodes: ['accountNumber parameter is required']
+    }, 400)
+  }
+
+  const normalized = normalizeNumber(originalInput)
+
+  if (!normalized) {
+    return respond({
+      ResultCode: 0,
+      ErrorCodes: ['Invalid account number format'],
+      OriginalInput: originalInput
+    }, 400)
   }
 
   try {
-    // Clean the phone number - remove all non-digit characters
-    accountNumber = accountNumber.replace(/\D/g, '')
-    
-    // For Pakistani numbers, handle special cases
-    // Convert 03xxxxxxxxx to 92xxxxxxxxxxx format
-    if (accountNumber.startsWith('03') && accountNumber.length === 11) {
-      // Replace 03 with 923
-      accountNumber = '92' + accountNumber.substring(1)
-    } else if (accountNumber.startsWith('3') && accountNumber.length === 10) {
-      // Format: 3xxxxxxxxx to 923xxxxxxxxx
-      accountNumber = '92' + accountNumber
-    }
-    // For other countries, the API will handle validation based on their regex patterns
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8000)
 
-    // Call the original API
-    const apiUrl = `https://www.easyload.com.pk/dingconnect.php?action=GetProviders&accountNumber=${accountNumber}`
-    const response = await fetch(apiUrl)
-    const data = await response.json()
+    const apiUrl =
+      `https://www.easyload.com.pk/dingconnect.php?action=GetProviders&accountNumber=${normalized}`
 
-    if (data.ResultCode === 1 && data.Items && data.Items.length > 0) {
-      // Extract only Name and LogoUrl for each provider
-      const filteredItems = data.Items.map(item => ({
-        Name: item.Name,
-        Logo: item.LogoUrl,
-        Country: item.CountryIso,
-        ProviderCode: item.ProviderCode,
-        PaymentTypes: item.PaymentTypes || []
-      }))
+    const res = await fetch(apiUrl, { signal: controller.signal })
+    clearTimeout(timeout)
 
-      // Create simplified response
-      const simplifiedResponse = {
-        ResultCode: data.ResultCode,
-        ErrorCodes: data.ErrorCodes,
-        Items: filteredItems,
-        OriginalInput: url.searchParams.get('accountNumber'),
-        NormalizedNumber: accountNumber
-      }
+    if (!res.ok) throw new Error('Upstream API error')
 
-      return new Response(JSON.stringify(simplifiedResponse), {
-        headers: corsHeaders
+    const data = await res.json()
+
+    if (data.ResultCode === 1 && Array.isArray(data.Items)) {
+      return respond({
+        ResultCode: 1,
+        Items: data.Items.map(p => ({
+          Name: p.Name,
+          Logo: p.LogoUrl,
+          Country: p.CountryIso,
+          ProviderCode: p.ProviderCode,
+          PaymentTypes: p.PaymentTypes || []
+        })),
+        OriginalInput: originalInput,
+        NormalizedNumber: normalized
       })
-    } else {
-      // No providers found or error
-      return new Response(
-        JSON.stringify({
-          ResultCode: data.ResultCode || 0,
-          ErrorCodes: data.ErrorCodes || ['No providers found for this number'],
-          OriginalInput: url.searchParams.get('accountNumber'),
-          NormalizedNumber: accountNumber,
-          Items: []
-        }),
-        {
-          headers: corsHeaders
-        }
-      )
     }
 
-  } catch (error) {
-    return new Response(
-      JSON.stringify({ 
-        ResultCode: 0, 
-        ErrorCodes: ['Internal server error'] 
-      }), 
-      { 
-        status: 500, 
-        headers: corsHeaders 
-      }
-    )
+    return respond({
+      ResultCode: 0,
+      ErrorCodes: data.ErrorCodes || ['No providers found'],
+      Items: [],
+      OriginalInput: originalInput,
+      NormalizedNumber: normalized
+    })
+
+  } catch (err) {
+    return respond({
+      ResultCode: 0,
+      ErrorCodes: [
+        err.name === 'AbortError'
+          ? 'Request timeout'
+          : 'Internal server error'
+      ]
+    }, 500)
   }
 }
