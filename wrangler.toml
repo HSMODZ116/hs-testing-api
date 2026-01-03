@@ -1,0 +1,4 @@
+name = "music-generator"
+main = "music-generator.js"
+compatibility_date = "2024-01-01"
+workers_dev = true
