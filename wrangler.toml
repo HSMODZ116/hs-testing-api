@@ -1,0 +1,8 @@
+name = "spotify-downloader-api"
+main = "Spotify Downloader.js"
+compatibility_date = "2024-01-01"
+
+[env.production]
+name = "spotify-downloader-api"
+route = ""
+workers_dev = true
