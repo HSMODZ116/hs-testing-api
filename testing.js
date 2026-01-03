@@ -1,109 +1,83 @@
 addEventListener('fetch', event => {
   event.respondWith(handleRequest(event.request))
 })
-
-const API_CONFIG = {
-  developer: 'El Impaciente',
-  telegram_channel: 'https://t.me/Apisimpacientes',
-  suno_api: 'https://anabot.my.id/api/ai/suno',
-  api_key: 'freeApikey'
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type'
 }
-
-function jsonResponse(data, status = 200) {
-  return new Response(JSON.stringify({
-    status_code: status,
-    developer: API_CONFIG.developer,
-    telegram_channel: API_CONFIG.telegram_channel,
-    ...data
-  }), {
-    status: status,
-    headers: { 
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*'
-    }
-  })
-}
-
 async function handleRequest(request) {
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { headers: CORS })
+  }
+  if (request.method !== 'POST') {
+    return jsonResponse({ success: false, message: 'Only POST requests are allowed' }, 405)
+  }
   const url = new URL(request.url)
-  const path = url.pathname
-  
-  if (request.method !== 'GET') {
-    return jsonResponse({ message: 'Only GET requests are allowed' }, 400)
+  if (!url.pathname.startsWith('/pdf')) {
+    return jsonResponse({ success: false, message: 'Endpoint not found. Use /pdf' }, 404)
   }
-  
-  if (path === '/generate' || path === '/generate/') {
-    const lyrics = url.searchParams.get('lyrics')
-    const genre = url.searchParams.get('genre')
-    
-    // Validación de parámetros - detectar cuáles faltan
-    const missing = []
-    
-    if (!lyrics || lyrics.trim() === '') {
-      missing.push('lyrics')
+  try {
+    const formData = await request.formData()
+    const pdfFile = formData.get('pdf')
+    if (!pdfFile) {
+      return jsonResponse({ success: false, message: 'PDF file required' }, 400)
     }
-    
-    if (!genre || genre.trim() === '') {
-      missing.push('genre')
-    }
-    
-    // Si falta algún parámetro, indicar cuál(es)
-    if (missing.length > 0) {
-      const params = missing.join(', ')
-      return jsonResponse({ 
-        message: `Missing required parameter(s): ${params}`,
-        required_parameters: ['lyrics', 'genre']
-      }, 400)
-    }
-    
-    try {
-      // Construir URL de la API de Suno
-      const sunoUrl = new URL(API_CONFIG.suno_api)
-      sunoUrl.searchParams.set('lyrics', lyrics.trim())
-      sunoUrl.searchParams.set('style', genre.trim())
-      sunoUrl.searchParams.set('instrumen', 'no')
-      sunoUrl.searchParams.set('apikey', API_CONFIG.api_key)
-      
-      const response = await fetch(sunoUrl.toString(), {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      })
-      
-      const data = await response.json()
-      
-      // Verificar si la respuesta es exitosa
-      if (data.success && data.data && data.data.result && data.data.result.length > 0) {
-        const song = data.data.result[0]
-        
-        return jsonResponse({
-          message: 'Music generated successfully',
-          response: {
-            id: song.id || 'unknown',
-            genre: genre,
-            audio_url: song.audio_url || null
-          }
-        }, 200)
-      } else {
-        return jsonResponse({ 
-          message: 'Failed to generate music',
-          error: data.message || 'Unknown error'
-        }, 400)
-      }
-      
-    } catch (error) {
-      return jsonResponse({ 
-        message: 'Error generating music. Please try again.',
-        error: error.message 
-      }, 400)
+    const timestamp = Date.now()
+    const filename = `pdf_${timestamp}.pdf`
+    const uploadedUrl = await uploadToTmpFiles(pdfFile, filename)
+    const text = await extractTextFromPDF(uploadedUrl)
+    return jsonResponse({ success: true, text }, 200)
+  } catch (error) {
+    return jsonResponse({ success: false, message: error.message || 'Error processing PDF' }, 400)
+  }
+}
+async function uploadToTmpFiles(file, filename) {
+  const formData = new FormData()
+  formData.append('file', file, filename)
+  const response = await fetch('https://tmpfiles.org/api/v1/upload', {
+    method: 'POST',
+    body: formData
+  })
+  if (!response.ok) {
+    throw new Error('Failed to upload PDF')
+  }
+  const data = await response.json()
+  if (!data.data?.url) {
+    throw new Error('No upload URL received')
+  }
+  const normalUrl = data.data.url
+  const parts = normalUrl.split('/')
+  let fileId = ''
+  for (const part of parts) {
+    if (/^\d+$/.test(part)) {
+      fileId = part
+      break
     }
   }
-  
-  // Endpoint de ayuda
-  return jsonResponse({
-    message: 'Welcome to Suno Music Generator API',
-    usage: 'Use /generate?lyrics=YOUR_LYRICS&genre=YOUR_GENRE',
-    example: '/generate?lyrics=Dancing+under+the+stars&genre=Pop'
-  }, 200)
+  return `https://tmpfiles.org/dl/${fileId}/${filename}`
+}
+async function extractTextFromPDF(pdfUrl) {
+  const response = await fetch('https://api.kome.ai/api/tools/pdf-to-text', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ url: pdfUrl }),
+    signal: AbortSignal.timeout(60000)
+  })
+  if (!response.ok) {
+    throw new Error('Failed to extract text from PDF')
+  }
+  const data = await response.json()
+  if (!data.text) {
+    throw new Error('No text extracted from PDF')
+  }
+  return data.text
+}
+function jsonResponse(data, status = 200, extraHeaders = {}) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...CORS, ...extraHeaders }
+  })
 }
