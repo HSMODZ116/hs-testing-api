@@ -1,32 +1,31 @@
-from flask import Flask, request, jsonify
-import requests
 import json
 import re
+import requests
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-@app.route('/', methods=['GET'])
-def home():
-    return jsonify({
-        "status": True,
-        "message": "Phone lookup API",
-        "endpoint": "/lookup?num=PHONE_NUMBER",
-        "developer": "Haseeb Sahil"
-    })
+def clean_num(num: str) -> str:
+    num = (num or "").strip()
+    num = re.sub(r"[^0-9]", "", num)
+    return num
 
-@app.route('/lookup', methods=['GET'])
-def get_name_from_number():
-    num = request.args.get('num', '').strip()
+@app.get("/")
+def root():
+    """
+    Usage:
+      /?num=9876543210   (without +91)
+    """
+    num = request.args.get("num", "")
+    num = clean_num(num)
 
     if not num:
         return jsonify({
             "status": False,
             "message": "num parameter missing",
-            "developer": "Haseeb Sahil"
+            "developer": "abbas"
         }), 400
 
-    # clean number
-    num = re.sub(r"[^0-9]", "", num)
     cpn = "%2B91" + num
 
     url = (
@@ -41,30 +40,30 @@ def get_name_from_number():
     }
 
     try:
-        # Suppress SSL warnings for development (not recommended for production)
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        
+        # NOTE: verify=False insecure hota hai, lekin aapke original code me yehi tha.
         res = requests.get(url, headers=headers, timeout=15, verify=False)
+        res.raise_for_status()
         data = res.json()
-    except Exception as e:
+    except Exception:
         return jsonify({
             "status": False,
-            "message": f"Source API error: {str(e)}",
-            "developer": "Haseeb Sahil"
-        }), 500
+            "message": "Source API error",
+            "developer": "abbas"
+        }), 502
 
     if not data:
         return jsonify({
             "status": False,
             "message": "No data found",
-            "developer": "Haseeb Sahil"
+            "developer": "abbas"
         }), 404
 
-    data["developer"] = "Haseeb Sahil"
+    data["developer"] = "abbas"
     data["source"] = "hidden"
+    return app.response_class(
+        response=json.dumps(data, ensure_ascii=False, indent=4),
+        status=200,
+        mimetype="application/json"
+    )
 
-    return jsonify(data)
-
-if __name__ == '__main__':
-    app.run(debug=True)
+# Vercel serverless will import "app" automatically
