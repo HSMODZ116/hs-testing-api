@@ -1,17 +1,29 @@
+from flask import Flask, request, jsonify
 import requests
 import json
 import re
 
+app = Flask(__name__)
+
+@app.route('/', methods=['GET'])
+def home():
+    return jsonify({
+        "status": True,
+        "message": "Phone lookup API",
+        "endpoint": "/lookup?num=PHONE_NUMBER",
+        "developer": "Haseeb Sahil"
+    })
+
+@app.route('/lookup', methods=['GET'])
 def get_name_from_number():
-    num = input("Enter phone number (without +91): ").strip()
+    num = request.args.get('num', '').strip()
 
     if not num:
-        print(json.dumps({
+        return jsonify({
             "status": False,
             "message": "num parameter missing",
             "developer": "Haseeb Sahil"
-        }, indent=4))
-        return
+        }), 400
 
     # clean number
     num = re.sub(r"[^0-9]", "", num)
@@ -29,29 +41,30 @@ def get_name_from_number():
     }
 
     try:
+        # Suppress SSL warnings for development (not recommended for production)
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
         res = requests.get(url, headers=headers, timeout=15, verify=False)
         data = res.json()
-    except Exception:
-        print(json.dumps({
+    except Exception as e:
+        return jsonify({
             "status": False,
-            "message": "Source API error",
+            "message": f"Source API error: {str(e)}",
             "developer": "Haseeb Sahil"
-        }, indent=4))
-        return
+        }), 500
 
     if not data:
-        print(json.dumps({
+        return jsonify({
             "status": False,
             "message": "No data found",
             "developer": "Haseeb Sahil"
-        }, indent=4))
-        return
+        }), 404
 
     data["developer"] = "Haseeb Sahil"
     data["source"] = "hidden"
 
-    print(json.dumps(data, indent=4, ensure_ascii=False))
+    return jsonify(data)
 
-
-if __name__ == "__main__":
-    get_name_from_number()
+if __name__ == '__main__':
+    app.run(debug=True)
